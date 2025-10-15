@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
- * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, example-fillers, JSON validation with useful error messages.
- * Version: 1.4.0
+ * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, example-fillers, JSON validation with useful error messages, and a type-ahead dropdown for schema types.
+ * Version: 1.5.0
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -63,7 +63,7 @@ class YSE_Agency_UI {
     public function admin_assets($hook){
         if ($hook !== 'settings_page_yse-settings' && $hook !== 'post.php' && $hook !== 'post-new.php') return;
         wp_enqueue_media();
-        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.4.0', true);
+        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.5.0', true);
         wp_add_inline_script('yse-admin', "
             jQuery(function($){
                 // Media picker
@@ -99,9 +99,20 @@ class YSE_Agency_UI {
                         {\"@id\":\"https://www.wikidata.org/wiki/Q16674915\"}
                     ]);
                 });
+
+                // Metabox UX helpers
+                // When user chooses from the 'common types' select, copy into the input (keeps free-typing possible)
+                $(document).on('change', '#yse_piece_type_select', function(){
+                    const val = $(this).val();
+                    if (val) {
+                        $('#yse_piece_type').val(val);
+                        // reset select back to placeholder so user sees it again later
+                        $(this).val('');
+                    }
+                });
             });
         ");
-        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.4.0');
+        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.5.0');
         wp_add_inline_style('yse-admin-css', "
             .yse-field { margin: 12px 0; }
             .yse-field label { font-weight: 600; display:block; margin-bottom:4px; }
@@ -117,6 +128,8 @@ class YSE_Agency_UI {
             .button-link { margin-left:8px; }
             textarea.code { min-height: 140px; }
             .yse-meta small { color:#666; display:block; margin-top:4px; }
+            .yse-meta .inline { display:flex; gap:8px; align-items:center; }
+            .yse-meta .inline select { flex:1; }
         ");
     }
 
@@ -172,15 +185,15 @@ class YSE_Agency_UI {
 
         // CPT map
         add_settings_section('yse_cpt', 'CPT → Schema Mapping', function(){
-            echo '<p>One per line, format: <span class="yse-badge">cpt:Type</span> (e.g., <code>services:Service</code>, <code>locations:Place</code>, <code>team:Person</code>, <code>software:SoftwareApplication</code>).</p>
-            <p class="yse-help">ELI5: You tell us what each custom post type represents. Example:<br><code>services:Service</code><br><code>locations:Place</code><br><code>team:Person</code></p>';
+            echo '<p>One per line, format: <span class=\"yse-badge\">cpt:Type</span> (e.g., <code>services:Service</code>, <code>locations:Place</code>, <code>team:Person</code>, <code>software:SoftwareApplication</code>).</p>
+            <p class=\"yse-help\">ELI5: You tell us what each custom post type represents. Example:<br><code>services:Service</code><br><code>locations:Place</code><br><code>team:Person</code></p>';
         }, 'yse-settings');
         add_settings_field('cpt_map','Mappings',[$this,'render_field'],'yse-settings','yse_cpt',['key'=>'cpt_map','type'=>'textarea','help'=>'Enter one mapping per line.']);
 
         // Mentions
         add_settings_section('yse_mentions', 'Topic Mentions (LLM-friendly)', function(){
-            echo '<p>Entities the site is clearly about/mentions. JSON array of <code>{ "@id": "https://..." }</code>.</p>
-                  <p class="yse-help">ELI5: Think of these as Wikipedia/Wikidata links that describe your topics. Example → click “Insert example”.</p>';
+            echo '<p>Entities the site is clearly about/mentions. JSON array of <code>{ \"@id\": \"https://...\" }</code>.</p>
+                  <p class=\"yse-help\">ELI5: Think of these as Wikipedia/Wikidata links that describe your topics. Example → click “Insert example”.</p>';
         }, 'yse-settings');
         add_settings_field('entity_mentions','about/mentions JSON',[$this,'render_field'],'yse-settings','yse_mentions',[
             'key'=>'entity_mentions','type'=>'textarea','options'=>'entity_mentions','help'=>'Keep it short and relevant. We add these to both about and mentions.'
@@ -383,7 +396,7 @@ class YSE_Agency_UI {
         $hints = [];
         if (preg_match('/syntax|unexpected/i', $msg)) {
             $hints[] = 'Check for missing commas between items.';
-            $hints[] = 'Keys and strings must use straight double-quotes "like this".';
+            $hints[] = 'Keys and strings must use straight double-quotes \"like this\".';
             $hints[] = 'Remove trailing commas after the last item.';
         }
         add_settings_error(self::OPT_KEY, "json_error_{$field_key}",
@@ -463,8 +476,32 @@ class YSE_Agency_UI {
         ];
     }
 
+    /** Curated list of common Schema.org types for type-ahead. */
+    private static function common_schema_types(){
+        // Keep this focused but broad (editor-friendly).
+        return [
+            'Article','BlogPosting','NewsArticle','TechArticle',
+            'AboutPage','ContactPage','FAQPage','HowTo','ItemPage','ProfilePage','CollectionPage','WebPage',
+            'Person','Organization','LocalBusiness','ProfessionalService','LegalService','AccountingService',
+            'FinancialService','InsuranceAgency','RealEstateAgent','MedicalOrganization','Dentist','Physician',
+            'Pharmacy','VeterinaryCare','HealthAndBeautyBusiness','HairSalon','NailSalon','DaySpa',
+            'HomeAndConstructionBusiness','Electrician','HVACBusiness','Locksmith','MovingCompany','Plumber',
+            'RoofingContractor','GeneralContractor','AutomotiveBusiness','AutoRepair','AutoBodyShop','AutoDealer',
+            'FoodEstablishment','Restaurant','Bakery','CafeOrCoffeeShop','BarOrPub',
+            'LodgingBusiness','Hotel','Motel','Resort',
+            'Store','BookStore','ClothingStore','ComputerStore','ElectronicsStore','FurnitureStore','GardenStore',
+            'GroceryStore','HardwareStore','JewelryStore','MobilePhoneStore','SportingGoodsStore','TireShop','ToyStore',
+            'Place','TouristAttraction','LandmarksOrHistoricalBuildings',
+            'Event','BusinessEvent','EducationEvent','Festival','MusicEvent','SportsEvent',
+            'Product','Service','Offer','AggregateOffer',
+            'SoftwareApplication','MobileApplication','WebApplication',
+            'Course','JobPosting','CreativeWork','Recipe','Review','VideoObject','ImageObject',
+            'FAQPage','BreadcrumbList','DataFeed','Dataset','QAPage'
+        ];
+    }
+
     /* ------------------------
-     * Per-post metabox (overrides)
+     * Per-post metabox (overrides) with type-ahead
      * ----------------------*/
     public function add_metabox(){
         $post_types = get_post_types(['public'=>true],'names');
@@ -483,14 +520,30 @@ class YSE_Agency_UI {
         $mentions  = get_post_meta($post->ID, '_yse_entity_mentions', true);
 
         $page_types = ['','AboutPage','ContactPage','FAQPage','HowTo','ProfilePage','CollectionPage','ItemPage','WebPage'];
+        $common = self::common_schema_types();
+
         echo '<div class="yse-meta">';
         echo '<p><label><input type="checkbox" name="yse_override_enabled" value="1" '.checked($enabled,true,false).'/> Enable per-page override</label></p>';
 
-        echo '<p><label for="yse_piece_type"><strong>Schema Type (optional)</strong></label><br/>';
-        echo '<input type="text" class="widefat" id="yse_piece_type" name="yse_piece_type" value="'.esc_attr($pieceType).'" placeholder="e.g., Service, Place, SoftwareApplication"/>';
-        echo '<small>What this page primarily represents. Leave blank to use defaults/CPT mapping.</small></p>';
+        // Schema type input with datalist + optional select helper
+        echo '<p><label for="yse_piece_type"><strong>Schema Type</strong></label></p>';
+        echo '<div class="inline">';
+        echo '<select id="yse_piece_type_select" class="widefat" aria-label="Common schema types helper">';
+        echo '<option value="">(Pick common type)</option>';
+        foreach($common as $opt){
+            printf('<option value="%s">%s</option>', esc_attr($opt), esc_html($opt));
+        }
+        echo '</select>';
+        echo '</div>';
+        echo '<input type="text" class="widefat" id="yse_piece_type" name="yse_piece_type" list="yse_schema_types" value="'.esc_attr($pieceType).'" placeholder="Start typing: Service, Place, SoftwareApplication..."/>';
+        echo '<datalist id="yse_schema_types">';
+        foreach($common as $opt){
+            printf('<option value="%s">', esc_attr($opt));
+        }
+        echo '</datalist>';
+        echo '<small>Choose from the list or type a custom Schema.org type. We’ll validate it.</small>';
 
-        echo '<p><label for="yse_webpage_type"><strong>WebPage @type (optional)</strong></label><br/>';
+        echo '<p style="margin-top:10px;"><label for="yse_webpage_type"><strong>WebPage @type (optional)</strong></label><br/>';
         echo '<select id="yse_webpage_type" name="yse_webpage_type" class="widefat">';
         foreach($page_types as $pt){
             printf('<option value="%s" %s>%s</option>', esc_attr($pt), selected($pageType,$pt,false), $pt ? esc_html($pt) : '(Default)');
@@ -524,7 +577,6 @@ class YSE_Agency_UI {
             if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)){
                 update_post_meta($post_id, '_yse_entity_mentions', wp_json_encode($decoded, JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
             } else {
-                // Keep user input but flag admin notice once (per save request)
                 update_post_meta($post_id, '_yse_entity_mentions', '');
                 add_filter('redirect_post_location', function($location){
                     return add_query_arg(['yse_json_error'=>'mentions'], $location);
@@ -539,10 +591,10 @@ class YSE_Agency_UI {
      * Schema Filters (merge-first, per-post override support)
      * ----------------------*/
     private function hook_schema_filters(){
-        // Show one-time JSON error after save_post redirect (metabox)
+        // One-time JSON error after save_post redirect (metabox)
         add_action('admin_notices', function(){
             if (isset($_GET['yse_json_error']) && $_GET['yse_json_error']==='mentions'){
-                echo '<div class="notice notice-error"><p><strong>Schema Extender:</strong> Invalid JSON in per-page <em>about/mentions</em>. Please fix the JSON (array of { "@id": "https://..." }).</p></div>';
+                echo '<div class="notice notice-error"><p><strong>Schema Extender:</strong> Invalid JSON in per-page <em>about/mentions</em>. Please fix the JSON (array of { \"@id\": \"https://...\" }).</p></div>';
             }
         });
 
