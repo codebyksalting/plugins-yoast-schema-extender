@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility)
- * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI. Merges with Yoast Site Representation by default, with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active.
- * Version: 1.2.0
+ * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
+ * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help and example-fillers for JSON fields.
+ * Version: 1.3.0
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -19,15 +19,12 @@ class YSE_Agency_UI {
     }
 
     private function __construct(){
-        // Settings UI
         add_action('admin_menu', [$this,'admin_menu']);
         add_action('admin_init', [$this,'register_settings']);
         add_action('admin_enqueue_scripts', [$this,'admin_assets']);
 
-        // Notices
         add_action('admin_notices', [$this,'maybe_show_dependency_notice']);
 
-        // Hook schema filters only if Yoast is present
         add_action('plugins_loaded', function(){
             if ($this->yoast_available()){
                 $this->hook_schema_filters();
@@ -44,7 +41,6 @@ class YSE_Agency_UI {
     private function yoast_local_available(){
         return defined('WPSEO_LOCAL_VERSION') || class_exists('\Yoast\WP\Local\Main');
     }
-
     public function maybe_show_dependency_notice(){
         if (!current_user_can('manage_options')) return;
         if (!$this->yoast_available()){
@@ -68,34 +64,59 @@ class YSE_Agency_UI {
     public function admin_assets($hook){
         if ($hook !== 'settings_page_yse-settings') return;
         wp_enqueue_media();
-        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.2.0', true);
+        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.3.0', true);
         wp_add_inline_script('yse-admin', "
             jQuery(function($){
+                // Media picker
                 $('.yse-media').on('click', function(e){
                     e.preventDefault();
                     const field = $('#'+$(this).data('target'));
-                    const frame = wp.media({title: 'Select Logo', button:{text:'Use this'}, multiple:false});
+                    const frame = wp.media({title:'Select Logo', button:{text:'Use this'}, multiple:false});
                     frame.on('select', function(){
                         const att = frame.state().get('selection').first().toJSON();
                         field.val(att.url);
                     });
                     frame.open();
                 });
+                // Example fillers for JSON fields
+                function fill(id, sample){
+                    const el = $('#'+id);
+                    el.val(JSON.stringify(sample, null, 2));
+                }
+                $('[data-yse-example=\"identifier\"]').on('click', function(e){
+                    e.preventDefault();
+                    fill('identifier', [{\"@type\":\"PropertyValue\",\"propertyID\":\"DUNS\",\"value\":\"123456789\"}]);
+                });
+                $('[data-yse-example=\"opening_hours\"]').on('click', function(e){
+                    e.preventDefault();
+                    fill('opening_hours', [
+                        {\"@type\":\"OpeningHoursSpecification\",\"dayOfWeek\":[\"Monday\",\"Tuesday\",\"Wednesday\",\"Thursday\",\"Friday\"],\"opens\":\"09:00\",\"closes\":\"17:00\"}
+                    ]);
+                });
+                $('[data-yse-example=\"entity_mentions\"]').on('click', function(e){
+                    e.preventDefault();
+                    fill('entity_mentions', [
+                        {\"@id\":\"https://en.wikipedia.org/wiki/Web_design\"},
+                        {\"@id\":\"https://www.wikidata.org/wiki/Q16674915\"}
+                    ]);
+                });
             });
         ");
-        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.2.0');
+        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.3.0');
         wp_add_inline_style('yse-admin-css', "
             .yse-field { margin: 12px 0; }
             .yse-field label { font-weight: 600; display:block; margin-bottom:4px; }
+            .yse-help { color:#555; font-size:12px; margin-top:4px; }
             .yse-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
             .yse-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-            .yse-note { color:#555; font-size:12px; }
             .yse-badge { display:inline-block; padding:2px 6px; background:#f0f0f1; border-radius:4px; font-size:11px; }
             .yse-status { background:#fff; border:1px solid #dcdcde; border-radius:6px; padding:12px; }
             .yse-status table { width:100%; border-collapse: collapse; }
             .yse-status th, .yse-status td { text-align:left; border-bottom:1px solid #efefef; padding:6px 8px; }
             .yse-good { color:#0a7; font-weight:600; }
             .yse-warn { color:#d60; font-weight:600; }
+            .button-link { margin-left:8px; }
+            textarea.code { min-height: 140px; }
         ");
     }
 
@@ -104,80 +125,111 @@ class YSE_Agency_UI {
 
         // Main org/local section
         add_settings_section('yse_main', 'Organization & LocalBusiness', function(){
-            echo '<p>Configure your primary entity for the Knowledge Graph and Local SEO. By default, values are merged with Yoast Site Representation.</p>';
+            echo '<p>Configure your primary entity for the Knowledge Graph and Local SEO. By default, values are merged with Yoast Site Representation (we fill blanks and merge lists).</p>';
         }, 'yse-settings');
 
         $fields = [
-            ['org_name','Organization Name','text'],
-            ['org_url','Organization URL','url'],
-            ['org_logo','Logo URL','text'],
-            ['same_as','sameAs Profiles (one URL per line)','textarea'],
-            ['identifier','Identifiers (JSON array)','textarea'],
-            ['is_local','Is LocalBusiness?','checkbox'],
-            ['lb_subtype','LocalBusiness Subtype','select', self::local_subtypes()],
+            ['org_name','Organization Name','text','', 'The official business name (as customers see it).'],
+            ['org_url','Organization URL','url','', 'Your primary website address (home page).'],
+            ['org_logo','Logo URL','text','', 'Square or rectangular logo. Use the “Select” button to pick from Media Library.'],
+            ['same_as','sameAs Profiles (one URL per line)','textarea','', 'ELI5: Paste links to your official profiles (LinkedIn, Facebook, Crunchbase, etc.). One per line. We merge these with Yoast’s list.'],
+            ['identifier','Identifiers (JSON array)','textarea','identifier', 'ELI5: Extra IDs that prove who you are (optional). Example → click “Insert example”.'],
+            ['is_local','Is LocalBusiness?','checkbox','', 'Tick if you serve a local area or have a location customers visit.'],
+            ['lb_subtype','LocalBusiness Subtype','select', self::local_subtypes(), 'Pick the closest match to your business type.'],
             // Address
-            ['addr_street','Street Address','text'],
-            ['addr_city','City / Locality','text'],
-            ['addr_region','Region / State','text'],
-            ['addr_postal','Postal Code','text'],
-            ['addr_country','Country Code (e.g., US)','text'],
-            ['telephone','Telephone (E.164 preferred)','text'],
-            ['geo_lat','Geo Latitude','text'],
-            ['geo_lng','Geo Longitude','text'],
-            ['opening_hours','Opening Hours (JSON array of OpeningHoursSpecification)','textarea'],
+            ['addr_street','Street Address','text','', 'Street and unit/suite. Leave blank if not public.'],
+            ['addr_city','City / Locality','text','', 'City name (e.g., Sacramento).'],
+            ['addr_region','Region / State','text','', 'State/region (e.g., CA).'],
+            ['addr_postal','Postal Code','text','', 'ZIP or postal code.'],
+            ['addr_country','Country Code (e.g., US)','text','', 'Two-letter country code (ISO-3166).'],
+            ['telephone','Telephone (E.164 preferred)','text','', 'Phone number (e.g., +1-916-555-1212).'],
+            ['geo_lat','Geo Latitude','text','', 'Optional. Decimal latitude (e.g., 38.5816).'],
+            ['geo_lng','Geo Longitude','text','', 'Optional. Decimal longitude (e.g., -121.4944).'],
+            ['opening_hours','Opening Hours (JSON array)','textarea','opening_hours', 'ELI5: Your business hours. Example → click “Insert example”.'],
         ];
         foreach ($fields as $f){
-            add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_main', ['key'=>$f[0],'type'=>$f[2],'options'=>$f[3]??null]);
+            add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_main', [
+                'key'=>$f[0],'type'=>$f[2],'options'=>$f[3]??null,'help'=>$f[4]??''
+            ]);
         }
 
         // Page intent
         add_settings_section('yse_intent', 'Page Intent Detection', function(){
-            echo '<p>Adjust how we mark pages (ContactPage, AboutPage, FAQPage, HowTo). First match wins.</p>';
+            echo '<p>Tell search engines what a page <em>is</em>. First match wins. Keep it honest: only label pages that actually show that content type.</p>';
         }, 'yse-settings');
-        foreach ([['slug_about','About slug (e.g., about)'],['slug_contact','Contact slug (e.g., contact)'],['faq_shortcode','FAQ shortcode tag (e.g., faq)'],['howto_shortcode','HowTo shortcode tag (e.g., howto)'],['extra_faq_slug','Additional FAQ page slug']] as $f){
-            add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_intent', ['key'=>$f[0],'type'=>'text']);
+        $intent = [
+            ['slug_about','About slug (e.g., about)','text','', 'If your About page slug is /about-us, enter <code>about-us</code>.'],
+            ['slug_contact','Contact slug (e.g., contact)','text','', 'If your Contact page slug is /get-in-touch, enter <code>get-in-touch</code>.'],
+            ['faq_shortcode','FAQ shortcode tag (e.g., faq)','text','', 'If your FAQ uses a shortcode like [faq], enter <code>faq</code>.'],
+            ['howto_shortcode','HowTo shortcode tag (e.g., howto)','text','', 'If your how-to uses [howto], enter <code>howto</code>.'],
+            ['extra_faq_slug','Additional FAQ page slug','text','', 'If you have a separate FAQs page, enter its slug here (e.g., <code>faqs</code>).'],
+        ];
+        foreach ($intent as $f){
+            add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_intent', [
+                'key'=>$f[0],'type'=>$f[2],'help'=>$f[4]??''
+            ]);
         }
 
         // CPT map
         add_settings_section('yse_cpt', 'CPT → Schema Mapping', function(){
-            echo '<p>One per line, format: <span class="yse-badge">cpt:Type</span> (e.g., <code>services:Service</code>, <code>locations:Place</code>, <code>team:Person</code>, <code>software:SoftwareApplication</code>).</p>';
+            echo '<p>One per line, format: <span class="yse-badge">cpt:Type</span> (e.g., <code>services:Service</code>, <code>locations:Place</code>, <code>team:Person</code>, <code>software:SoftwareApplication</code>).</p>
+            <p class="yse-help">ELI5: You tell us what each custom post type represents. Example:<br><code>services:Service</code><br><code>locations:Place</code><br><code>team:Person</code></p>';
         }, 'yse-settings');
-        add_settings_field('cpt_map','Mappings',[$this,'render_field'],'yse-settings','yse_cpt',['key'=>'cpt_map','type'=>'textarea']);
-
-        // Woo
-        add_settings_section('yse_wc', 'WooCommerce', function(){
-            echo '<p>Enhance Product schema with offers, price and availability.</p>';
-        }, 'yse-settings');
-        add_settings_field('wc_enable','Enable Woo Product augmentation',[$this,'render_field'],'yse-settings','yse_wc',['key'=>'wc_enable','type'=>'checkbox']);
+        add_settings_field('cpt_map','Mappings',[$this,'render_field'],'yse-settings','yse_cpt',['key'=>'cpt_map','type'=>'textarea','help'=>'Enter one mapping per line.']);
 
         // Mentions
         add_settings_section('yse_mentions', 'Topic Mentions (LLM-friendly)', function(){
-            echo '<p>Entities the site is clearly about/mentions. JSON array of <code>{ "@id": "https://..." }</code>.</p>';
+            echo '<p>Entities the site is clearly about/mentions. JSON array of <code>{ "@id": "https://..." }</code>.</p>
+                  <p class="yse-help">ELI5: Think of these as Wikipedia/Wikidata links that describe your topics. Example → click “Insert example”.</p>';
         }, 'yse-settings');
-        add_settings_field('entity_mentions','about/mentions JSON',[$this,'render_field'],'yse-settings','yse_mentions',['key'=>'entity_mentions','type'=>'textarea']);
+        add_settings_field('entity_mentions','about/mentions JSON',[$this,'render_field'],'yse-settings','yse_mentions',[
+            'key'=>'entity_mentions','type'=>'textarea','options'=>'entity_mentions','help'=>'Keep it short and relevant. We add these to both about and mentions.'
+        ]);
 
         // Compatibility (Respect Yoast / Override toggle)
         add_settings_section('yse_overrides','Compatibility', function(){
-            echo '<p>By default, the extender <strong>merges</strong> with Yoast Site Representation (fills blanks, merges sameAs). Turn on override to let your values take precedence.</p>';
+            echo '<p>By default, we <strong>merge</strong> with Yoast Site Representation (fill blanks, merge lists). Turn on override to let your values win.</p>';
         }, 'yse-settings');
-        add_settings_field('override_org','Allow overriding Yoast Site Representation',[$this,'render_field'],'yse-settings','yse_overrides',['key'=>'override_org','type'=>'checkbox']);
+        add_settings_field('override_org','Allow overriding Yoast Site Representation',[$this,'render_field'],'yse-settings','yse_overrides',['key'=>'override_org','type'=>'checkbox','help'=>'Leave OFF unless Yoast values are missing/wrong.']);
     }
 
     public function render_field($args){
-        $key = $args['key']; $type = $args['type']; $options = $args['options'] ?? null;
+        $key = $args['key']; $type = $args['type']; $options = $args['options'] ?? null; $help = $args['help'] ?? '';
         $opt = get_option(self::OPT_KEY, []);
         $val = isset($opt[$key]) ? $opt[$key] : '';
+
         echo '<div class="yse-field">';
         if ($type==='text' || $type==='url'){
             printf('<input type="%s" class="regular-text" name="%s[%s]" id="%s" value="%s"/>',
                 esc_attr($type), esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_attr($val));
             if ($key==='org_logo'){
                 echo ' <button class="button yse-media" data-target="'.esc_attr($key).'">Select</button>';
-                echo '<p class="yse-note">Recommended: transparent PNG/SVG; ideally the same logo used in Yoast.</p>';
             }
         } elseif ($type==='textarea'){
-            printf('<textarea class="large-text code yse-mono" rows="6" name="%s[%s]" id="%s">%s</textarea>',
-                esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea($val));
+            printf('<textarea class="large-text code yse-mono" rows="8" name="%s[%s]" id="%s">%s</textarea>',
+                esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea(is_array($val)?json_encode($val,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES):$val));
+            // JSON helpers
+            if ($key==='identifier'){
+                echo ' <a href="#" class="button-link" data-yse-example="identifier">Insert example</a>';
+                echo '<div class="yse-help">Format: JSON array. Example:<br><code>[
+  { \"@type\": \"PropertyValue\", \"propertyID\": \"DUNS\", \"value\": \"123456789\" }
+]</code><br>Translation: “We’re adding official IDs (like DUNS). Optional.”</div>';
+            }
+            if ($key==='opening_hours'){
+                echo ' <a href="#" class="button-link" data-yse-example="opening_hours">Insert example</a>';
+                echo '<div class="yse-help">Format: JSON array of <code>OpeningHoursSpecification</code>. Example:<br><code>[
+  { \"@type\": \"OpeningHoursSpecification\",
+    \"dayOfWeek\": [\"Monday\",\"Tuesday\",\"Wednesday\",\"Thursday\",\"Friday\"],
+    \"opens\": \"09:00\", \"closes\": \"17:00\" }
+]</code><br>Translation: “List the days you’re open and the times. Use 24-hour HH:MM.”</div>';
+            }
+            if ($key==='entity_mentions'){
+                echo ' <a href="#" class="button-link" data-yse-example="entity_mentions">Insert example</a>';
+                echo '<div class="yse-help">Format: JSON array of objects with <code>@id</code> URLs. Example:<br><code>[
+  { \"@id\": \"https://en.wikipedia.org/wiki/Web_design\" },
+  { \"@id\": \"https://www.wikidata.org/wiki/Q16674915\" }
+]</code><br>Translation: “Authoritative pages that define your topic. Keep it short.”</div>';
+            }
         } elseif ($type==='checkbox'){
             printf('<label><input type="checkbox" name="%s[%s]" value="1" %s/> Enable</label>',
                 esc_attr(self::OPT_KEY), esc_attr($key), checked($val, '1', false));
@@ -188,6 +240,9 @@ class YSE_Agency_UI {
                 printf('<option value="%s" %s>%s</option>', esc_attr($k), selected($val, $k, false), esc_html($label));
             }
             echo '</select>';
+        }
+        if (!empty($help)){
+            echo '<div class="yse-help">'.$help.'</div>';
         }
         echo '</div>';
     }
@@ -222,7 +277,7 @@ class YSE_Agency_UI {
                     <?php endforeach; ?>
                     </tbody>
                 </table>
-                <p class="yse-note">“Source” shows where the effective value is coming from right now (respecting your override setting).</p>
+                <p class="yse-help">“Source” shows where the effective value is coming from right now (respecting your override setting).</p>
             </div>
 
             <form method="post" action="options.php" style="margin-top:16px;">
@@ -234,18 +289,17 @@ class YSE_Agency_UI {
             </form>
 
             <hr/>
-            <p class="yse-note">Validate with Google Rich Results Test and validator.schema.org. Keep markup honest with visible content.</p>
+            <p class="yse-help">Validate with Google Rich Results Test and validator.schema.org. Keep markup honest with visible content.</p>
         </div>
         <?php
     }
 
     private function gather_org_status_rows(){
-        // Pull Yoast Site Representation (best-effort via filters/graph)
+        // Best-effort Yoast values (site identity)
         $yoast_name = get_bloginfo('name');
         $yoast_url  = home_url('/');
         $yoast_logo = function_exists('get_site_icon_url') ? get_site_icon_url() : '';
 
-        // Our settings
         $s = get_option(self::OPT_KEY, []);
         $override = !empty($s['override_org']) && $s['override_org']==='1';
 
@@ -254,33 +308,13 @@ class YSE_Agency_UI {
         $ext_logo = $s['org_logo'] ?? '';
 
         $rows = [];
-
-        // Effective values (respect mode or override)
         $eff_name = $override ? ($ext_name ?: $yoast_name) : ($yoast_name ?: $ext_name);
         $eff_url  = $override ? ($ext_url  ?: $yoast_url ) : ($yoast_url  ?: $ext_url );
         $eff_logo = $override ? ($ext_logo ?: $yoast_logo) : ($yoast_logo ?: $ext_logo);
 
-        $rows[] = [
-            'field'=>'name',
-            'yoast'=>$yoast_name,
-            'ext'=>$ext_name,
-            'effective'=>$eff_name,
-            'source'=> ($override ? ( $ext_name ? 'ext':'yoast') : ( $yoast_name ? 'yoast':'ext')),
-        ];
-        $rows[] = [
-            'field'=>'url',
-            'yoast'=>$yoast_url,
-            'ext'=>$ext_url,
-            'effective'=>$eff_url,
-            'source'=> ($override ? ( $ext_url ? 'ext':'yoast') : ( $yoast_url ? 'yoast':'ext')),
-        ];
-        $rows[] = [
-            'field'=>'logo',
-            'yoast'=>$yoast_logo,
-            'ext'=>$ext_logo,
-            'effective'=>$eff_logo,
-            'source'=> ($override ? ( $ext_logo ? 'ext':'yoast') : ( $yoast_logo ? 'yoast':'ext')),
-        ];
+        $rows[] = ['field'=>'name','yoast'=>$yoast_name,'ext'=>$ext_name,'effective'=>$eff_name,'source'=> ($override ? ( $ext_name ? 'ext':'yoast') : ( $yoast_name ? 'yoast':'ext'))];
+        $rows[] = ['field'=>'url','yoast'=>$yoast_url,'ext'=>$ext_url,'effective'=>$eff_url,'source'=> ($override ? ( $ext_url ? 'ext':'yoast') : ( $yoast_url ? 'yoast':'ext'))];
+        $rows[] = ['field'=>'logo','yoast'=>$yoast_logo,'ext'=>$ext_logo,'effective'=>$eff_logo,'source'=> ($override ? ( $ext_logo ? 'ext':'yoast') : ( $yoast_logo ? 'yoast':'ext'))];
 
         return $rows;
     }
@@ -313,8 +347,6 @@ class YSE_Agency_UI {
         $out['extra_faq_slug'] = sanitize_title($in['extra_faq_slug'] ?? '');
         // CPT map
         $out['cpt_map'] = $this->sanitize_cpt_map($in['cpt_map'] ?? '');
-        // Woo
-        $out['wc_enable'] = !empty($in['wc_enable']) ? '1' : '0';
         // Mentions
         $out['entity_mentions'] = $this->sanitize_json($in['entity_mentions'] ?? '[]', []);
         // Overrides
@@ -415,16 +447,14 @@ class YSE_Agency_UI {
      * Schema Filters (merge-first, override optional)
      * ----------------------*/
     private function hook_schema_filters(){
-        // Organization / LocalBusiness (merge-first)
+        // Organization / LocalBusiness
         add_filter('wpseo_schema_organization', function($data){
             $s = get_option(self::OPT_KEY, []);
             $yoast_local_active = $this->yoast_local_available();
             $override = !empty($s['override_org']) && $s['override_org'] === '1';
 
-            // Determine locality
             $is_local = (!$yoast_local_active) && !empty($s['is_local']) && $s['is_local'] === '1';
 
-            // @type / @id: avoid clobbering Yoast types; only override if asked
             if ($override) {
                 $data['@type'] = $is_local ? (!empty($s['lb_subtype']) ? $s['lb_subtype'] : 'LocalBusiness') : 'Organization';
             }
@@ -432,22 +462,18 @@ class YSE_Agency_UI {
                 $data['@id'] = $is_local ? home_url('#/schema/localbusiness') : home_url('#/schema/organization');
             }
 
-            // Name / URL / Logo (fill blanks unless overriding)
             if ($override || empty($data['name'])) $data['name'] = !empty($s['org_name']) ? $s['org_name'] : ($data['name'] ?? get_bloginfo('name'));
             if ($override || empty($data['url']))  $data['url']  = !empty($s['org_url'])  ? $s['org_url']  : ($data['url']  ?? home_url('/'));
             if (!empty($s['org_logo']) && ($override || empty($data['logo']))) $data['logo'] = ['@type'=>'ImageObject','url'=>$s['org_logo']];
 
-            // sameAs: union + de-dupe
             $existing_sameas = isset($data['sameAs']) && is_array($data['sameAs']) ? $data['sameAs'] : [];
             $ours_sameas     = !empty($s['same_as']) ? (array)$s['same_as'] : [];
             $data['sameAs']  = array_values(array_unique(array_filter(array_merge($existing_sameas, $ours_sameas))));
 
-            // Identifiers: merge arrays
             if (!empty($s['identifier']) && is_array($s['identifier'])) {
                 $data['identifier'] = array_values(array_merge($data['identifier'] ?? [], $s['identifier']));
             }
 
-            // LocalBusiness enrichment (skip if Yoast Local active)
             if ($is_local && !$yoast_local_active) {
                 $addr = array_filter([
                     '@type'           => 'PostalAddress',
@@ -503,7 +529,7 @@ class YSE_Agency_UI {
             return $data;
         }, 20);
 
-        // Graph additions (CPT → Schema, Woo Product, Breadcrumb, FAQ, Video)
+        // Graph additions (CPT → Schema, Breadcrumb, FAQ, Video)
         add_filter('wpseo_schema_graph_pieces', function($pieces, $context){
             if (!is_singular()) return $pieces;
             $s = get_option(self::OPT_KEY, []);
@@ -549,42 +575,6 @@ class YSE_Agency_UI {
                             return $graph;
                         }
                     };
-                }
-            }
-
-            // WooCommerce Product augmentation
-            if (function_exists('is_product') && is_product()){
-                $enable = !empty($s['wc_enable']) && $s['wc_enable']==='1';
-                if ($enable){
-                    global $product;
-                    if ($product instanceof WC_Product){
-                        $pieces[] = new class($context, $product) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
-                            private $product;
-                            public function __construct($context,$product){ parent::__construct($context); $this->product=$product; }
-                            public function is_needed(){ return true; }
-                            public function generate(){
-                                $id = get_permalink($this->product->get_id()).'#/schema/product';
-                                $price = function_exists('wc_get_price_to_display') ? wc_get_price_to_display($this->product) : $this->product->get_price();
-                                $data = [
-                                    '@type'=>'Product',
-                                    '@id'=>$id,
-                                    'name'=>$this->product->get_name(),
-                                    'sku'=>$this->product->get_sku() ?: null,
-                                    'url'=>get_permalink($this->product->get_id()),
-                                    'description'=>wp_strip_all_tags($this->product->get_short_description() ?: $this->product->get_description()),
-                                    'brand'=>['@type'=>'Brand','name'=>get_bloginfo('name')],
-                                    'offers'=>[
-                                        '@type'=>'Offer',
-                                        'price'=>$price,
-                                        'priceCurrency'=>get_woocommerce_currency(),
-                                        'availability'=>$this->product->is_in_stock() ? 'http://schema.org/InStock' : 'http://schema.org/OutOfStock',
-                                        'url'=>get_permalink($this->product->get_id()),
-                                    ],
-                                ];
-                                return array_filter($data);
-                            }
-                        };
-                    }
                 }
             }
 
