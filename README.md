@@ -1,4 +1,4 @@
-# plugins-yoast-schema-extender
+# Yoast Schema Extender
 A plugin to extend Yoast SEO's schema capabilities - reusable, agency-grade Schema Extender that layers neatly on top of Yoast SEO. It gives you: sane defaults, entity linking, per-page auto-detection, and industry-specific schema pieces you can toggle or extend without fighting Yoast
 
 ## Notes
