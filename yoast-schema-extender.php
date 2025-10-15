@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
- * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help and example-fillers for JSON fields.
- * Version: 1.3.0
+ * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, example-fillers, and JSON validation with useful error messages.
+ * Version: 1.3.1
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -64,7 +64,7 @@ class YSE_Agency_UI {
     public function admin_assets($hook){
         if ($hook !== 'settings_page_yse-settings') return;
         wp_enqueue_media();
-        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.3.0', true);
+        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.3.1', true);
         wp_add_inline_script('yse-admin', "
             jQuery(function($){
                 // Media picker
@@ -102,7 +102,7 @@ class YSE_Agency_UI {
                 });
             });
         ");
-        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.3.0');
+        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.3.1');
         wp_add_inline_style('yse-admin-css', "
             .yse-field { margin: 12px 0; }
             .yse-field label { font-weight: 600; display:block; margin-bottom:4px; }
@@ -254,6 +254,10 @@ class YSE_Agency_UI {
         ?>
         <div class="wrap">
             <h1>Schema Extender</h1>
+            <?php
+            // Show settings API errors (including JSON validation errors)
+            settings_errors(self::OPT_KEY);
+            ?>
             <?php if(!$yoast_ok): ?>
                 <div class="notice notice-warning"><p>Yoast SEO not detected. The schema extensions will be inactive until Yoast SEO is active.</p></div>
             <?php endif; ?>
@@ -326,7 +330,7 @@ class YSE_Agency_UI {
         $out['org_url']   = esc_url_raw($in['org_url'] ?? '');
         $out['org_logo']  = esc_url_raw($in['org_logo'] ?? '');
         $out['same_as']   = $this->sanitize_lines_as_urls($in['same_as'] ?? '');
-        $out['identifier']= $this->sanitize_json($in['identifier'] ?? '[]', []);
+        $out['identifier']= $this->sanitize_json_field($in['identifier'] ?? '[]', [], 'identifier', 'Identifiers');
         $out['is_local']  = !empty($in['is_local']) ? '1' : '0';
         $out['lb_subtype']= sanitize_text_field($in['lb_subtype'] ?? '');
         // Address
@@ -338,7 +342,7 @@ class YSE_Agency_UI {
         $out['telephone']    = sanitize_text_field($in['telephone'] ?? '');
         $out['geo_lat']      = sanitize_text_field($in['geo_lat'] ?? '');
         $out['geo_lng']      = sanitize_text_field($in['geo_lng'] ?? '');
-        $out['opening_hours']= $this->sanitize_json($in['opening_hours'] ?? '[]', []);
+        $out['opening_hours']= $this->sanitize_json_field($in['opening_hours'] ?? '[]', [], 'opening_hours', 'Opening Hours');
         // Intent
         $out['slug_about']     = sanitize_title($in['slug_about'] ?? '');
         $out['slug_contact']   = sanitize_title($in['slug_contact'] ?? '');
@@ -348,7 +352,7 @@ class YSE_Agency_UI {
         // CPT map
         $out['cpt_map'] = $this->sanitize_cpt_map($in['cpt_map'] ?? '');
         // Mentions
-        $out['entity_mentions'] = $this->sanitize_json($in['entity_mentions'] ?? '[]', []);
+        $out['entity_mentions'] = $this->sanitize_json_field($in['entity_mentions'] ?? '[]', [], 'entity_mentions', 'Topic Mentions');
         // Overrides
         $out['override_org'] = !empty($in['override_org']) ? '1' : '0';
         return $out;
@@ -364,11 +368,51 @@ class YSE_Agency_UI {
         return $urls;
     }
 
-    private function sanitize_json($raw, $fallback){
+    /**
+     * Validate a JSON field and register a settings error on failure.
+     * Returns decoded array (on success) or fallback (on failure).
+     */
+    private function sanitize_json_field($raw, $fallback, $field_key, $human_label){
         $raw = trim((string)$raw);
         if ($raw==='') return $fallback;
+
+        // Try to decode; capture error with context.
         $decoded = json_decode($raw, true);
-        return (json_last_error() === JSON_ERROR_NONE) ? $decoded : $fallback;
+        if (json_last_error() === JSON_ERROR_NONE){
+            // Ensure array shape (we expect array for these fields)
+            if (!is_array($decoded)){
+                add_settings_error(self::OPT_KEY, "json_type_{$field_key}",
+                    sprintf('%s must be a JSON array (e.g., [ ... ]). We received a different type.', esc_html($human_label)),
+                    'error'
+                );
+                return $fallback;
+            }
+            return $decoded;
+        }
+
+        // Build a helpful message
+        $msg = json_last_error_msg();
+        // Tiny hinting for common mistakes
+        $hints = [];
+        if (preg_match('/syntax|unexpected/i', $msg)) {
+            $hints[] = 'Check for missing commas between items.';
+            $hints[] = 'Keys and strings must use straight double-quotes "like this".';
+            $hints[] = 'Remove trailing commas after the last item.';
+        }
+
+        add_settings_error(
+            self::OPT_KEY,
+            "json_error_{$field_key}",
+            sprintf(
+                '%s: Invalid JSON. %s %s',
+                esc_html($human_label),
+                esc_html($msg),
+                $hints ? ('Hints: '.esc_html(implode(' ', $hints))) : ''
+            ),
+            'error'
+        );
+
+        return $fallback;
     }
 
     private function sanitize_cpt_map($raw){
