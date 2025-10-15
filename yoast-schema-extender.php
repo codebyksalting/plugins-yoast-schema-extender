@@ -3,7 +3,7 @@
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility)
  * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI. Merges with Yoast Site Representation by default, with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active.
  * Version: 1.2.0
- * Author: Your Agency
+ * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
