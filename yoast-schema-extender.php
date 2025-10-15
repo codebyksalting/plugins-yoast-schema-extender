@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
- * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, example-fillers, JSON validation with useful error messages, and a type-ahead dropdown for schema types.
- * Version: 1.5.0
+ * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation by default (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, example-fillers, JSON validation, type-ahead schema picker, Service Areas (global & per-page), admin columns, and Import/Export.
+ * Version: 1.6.0
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -28,6 +28,12 @@ class YSE_Agency_UI {
         // Per-post overrides
         add_action('add_meta_boxes', [$this,'add_metabox']);
         add_action('save_post', [$this,'save_metabox'], 10, 2);
+
+        // Admin columns (quick visibility for overrides / service areas)
+        add_action('admin_init', [$this,'register_admin_columns']);
+
+        // Import handler
+        add_action('admin_post_yse_import', [$this,'handle_import']);
 
         // Hook schema filters only if Yoast is present
         add_action('plugins_loaded', function(){
@@ -63,7 +69,7 @@ class YSE_Agency_UI {
     public function admin_assets($hook){
         if ($hook !== 'settings_page_yse-settings' && $hook !== 'post.php' && $hook !== 'post-new.php') return;
         wp_enqueue_media();
-        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.5.0', true);
+        wp_enqueue_script('yse-admin', plugin_dir_url(__FILE__).'yse-admin.js', ['jquery'], '1.6.0', true);
         wp_add_inline_script('yse-admin', "
             jQuery(function($){
                 // Media picker
@@ -101,18 +107,26 @@ class YSE_Agency_UI {
                 });
 
                 // Metabox UX helpers
-                // When user chooses from the 'common types' select, copy into the input (keeps free-typing possible)
                 $(document).on('change', '#yse_piece_type_select', function(){
                     const val = $(this).val();
                     if (val) {
                         $('#yse_piece_type').val(val);
-                        // reset select back to placeholder so user sees it again later
                         $(this).val('');
                     }
                 });
+
+                // Export copy button
+                $(document).on('click', '#yse-copy-export', function(e){
+                    e.preventDefault();
+                    const ta = document.getElementById('yse_export_json');
+                    ta.select(); ta.setSelectionRange(0, 99999);
+                    document.execCommand('copy');
+                    $(this).text('Copied!');
+                    setTimeout(()=>$(this).text('Copy'), 1200);
+                });
             });
         ");
-        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.5.0');
+        wp_enqueue_style('yse-admin-css', plugin_dir_url(__FILE__).'yse-admin.css', [], '1.6.0');
         wp_add_inline_style('yse-admin-css', "
             .yse-field { margin: 12px 0; }
             .yse-field label { font-weight: 600; display:block; margin-bottom:4px; }
@@ -130,6 +144,9 @@ class YSE_Agency_UI {
             .yse-meta small { color:#666; display:block; margin-top:4px; }
             .yse-meta .inline { display:flex; gap:8px; align-items:center; }
             .yse-meta .inline select { flex:1; }
+            .yse-grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+            .yse-card { background:#fff; border:1px solid #dcdcde; border-radius:6px; padding:12px; }
+            .yse-card h3 { margin-top:0; }
         ");
     }
 
@@ -159,6 +176,8 @@ class YSE_Agency_UI {
             ['geo_lat','Geo Latitude','text','', 'Optional. Decimal latitude (e.g., 38.5816).'],
             ['geo_lng','Geo Longitude','text','', 'Optional. Decimal longitude (e.g., -121.4944).'],
             ['opening_hours','Opening Hours (JSON array)','textarea','opening_hours', 'ELI5: Your business hours. Example → click “Insert example”.'],
+            // Service Areas (NEW)
+            ['service_area','Service Area – Cities (one per line)','textarea','', 'ELI5: Type the cities you serve. One city per line. Example:<br><code>San Francisco<br>Oakland<br>San Jose</code>'],
         ];
         foreach ($fields as $f){
             add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_main', [
@@ -168,7 +187,7 @@ class YSE_Agency_UI {
 
         // Page intent
         add_settings_section('yse_intent', 'Page Intent Detection', function(){
-            echo '<p>Tell search engines what a page <em>is</em>. First match wins. Keep it honest: only label pages that actually show that content type.</p>';
+            echo '<p>Tell search engines what a page <em>is</em>. First match wins. Keep it honest.</p>';
         }, 'yse-settings');
         $intent = [
             ['slug_about','About slug (e.g., about)','text','', 'If your About page slug is /about-us, enter <code>about-us</code>.'],
@@ -186,7 +205,7 @@ class YSE_Agency_UI {
         // CPT map
         add_settings_section('yse_cpt', 'CPT → Schema Mapping', function(){
             echo '<p>One per line, format: <span class=\"yse-badge\">cpt:Type</span> (e.g., <code>services:Service</code>, <code>locations:Place</code>, <code>team:Person</code>, <code>software:SoftwareApplication</code>).</p>
-            <p class=\"yse-help\">ELI5: You tell us what each custom post type represents. Example:<br><code>services:Service</code><br><code>locations:Place</code><br><code>team:Person</code></p>';
+            <p class=\"yse-help\">ELI5: You tell us what each custom post type represents.</p>';
         }, 'yse-settings');
         add_settings_field('cpt_map','Mappings',[$this,'render_field'],'yse-settings','yse_cpt',['key'=>'cpt_map','type'=>'textarea','help'=>'Enter one mapping per line.']);
 
@@ -201,9 +220,15 @@ class YSE_Agency_UI {
 
         // Compatibility (Respect Yoast / Override toggle)
         add_settings_section('yse_overrides','Compatibility', function(){
-            echo '<p>By default, we <strong>merge</strong> with Yoast Site Representation (fill blanks, merge lists). Turn on override to let your values win.</p>';
+            echo '<p>By default, we <strong>merge</strong> with Yoast Site Representation. Turn on override to let your values win.</p>';
         }, 'yse-settings');
         add_settings_field('override_org','Allow overriding Yoast Site Representation',[$this,'render_field'],'yse-settings','yse_overrides',['key'=>'override_org','type'=>'checkbox','help'=>'Leave OFF unless Yoast values are missing/wrong.']);
+
+        // Import/Export
+        add_settings_section('yse_ie','Import / Export', function(){
+            echo '<p>Move settings between sites. Export copies the entire plugin settings JSON. Import replaces current settings.</p>';
+        }, 'yse-settings');
+        add_settings_field('yse_ie_block','Tools',[$this,'render_import_export_block'],'yse-settings','yse_ie',['key'=>'yse_ie_block','type'=>'custom']);
     }
 
     public function render_field($args){
@@ -219,14 +244,25 @@ class YSE_Agency_UI {
                 echo ' <button class="button yse-media" data-target="'.esc_attr($key).'">Select</button>';
             }
         } elseif ($type==='textarea'){
-            printf('<textarea class="large-text code yse-mono" rows="8" name="%s[%s]" id="%s">%s</textarea>',
-                esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea(is_array($val)?json_encode($val,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES):$val));
+            // If stored as array, show as pretty JSON; else raw lines or string
+            $is_json_field = in_array($key, ['identifier','opening_hours','entity_mentions'], true);
+            if ($is_json_field){
+                $display = is_array($val) ? wp_json_encode($val, JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT) : (string)$val;
+                printf('<textarea class="large-text code yse-mono" rows="8" name="%s[%s]" id="%s">%s</textarea>',
+                    esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea($display));
+            } else {
+                // normal lines textarea
+                if (is_array($val)) $val = implode("\n",$val);
+                printf('<textarea class="large-text" rows="6" name="%s[%s]" id="%s">%s</textarea>',
+                    esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea((string)$val));
+            }
+
             // JSON helpers
             if ($key==='identifier'){
                 echo ' <a href="#" class="button-link" data-yse-example="identifier">Insert example</a>';
                 echo '<div class="yse-help">Format: JSON array. Example:<br><code>[
   { \"@type\": \"PropertyValue\", \"propertyID\": \"DUNS\", \"value\": \"123456789\" }
-]</code><br>Translation: “We’re adding official IDs (like DUNS). Optional.”</div>';
+]</code></div>';
             }
             if ($key==='opening_hours'){
                 echo ' <a href="#" class="button-link" data-yse-example="opening_hours">Insert example</a>';
@@ -234,14 +270,17 @@ class YSE_Agency_UI {
   { \"@type\": \"OpeningHoursSpecification\",
     \"dayOfWeek\": [\"Monday\",\"Tuesday\",\"Wednesday\",\"Thursday\",\"Friday\"],
     \"opens\": \"09:00\", \"closes\": \"17:00\" }
-]</code><br>Translation: “List the days you’re open and the times. Use 24-hour HH:MM.”</div>';
+]</code></div>';
             }
             if ($key==='entity_mentions'){
                 echo ' <a href="#" class="button-link" data-yse-example="entity_mentions">Insert example</a>';
                 echo '<div class="yse-help">Format: JSON array of objects with <code>@id</code> URLs. Example:<br><code>[
   { \"@id\": \"https://en.wikipedia.org/wiki/Web_design\" },
   { \"@id\": \"https://www.wikidata.org/wiki/Q16674915\" }
-]</code><br>Translation: “Authoritative pages that define your topic. Keep it short.”</div>';
+]</code></div>';
+            }
+            if ($key==='service_area'){
+                echo '<div class="yse-help">One city per line. We output structured <code>City</code> objects into <code>areaServed</code>.</div>';
             }
         } elseif ($type==='checkbox'){
             printf('<label><input type="checkbox" name="%s[%s]" value="1" %s/> Enable</label>',
@@ -260,6 +299,56 @@ class YSE_Agency_UI {
         echo '</div>';
     }
 
+    public function render_import_export_block(){
+        if (!current_user_can('manage_options')) return;
+        $settings = get_option(self::OPT_KEY, []);
+        $export   = wp_json_encode($settings, JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT);
+
+        echo '<div class="yse-grid-2">';
+        echo '<div class="yse-card">';
+        echo '<h3>Export</h3>';
+        echo '<p>Copy this JSON and paste it into another site\'s Import box.</p>';
+        echo '<textarea id="yse_export_json" class="large-text code yse-mono" rows="12" readonly>'.esc_textarea($export).'</textarea>';
+        echo '<p><a href="#" id="yse-copy-export" class="button">Copy</a></p>';
+        echo '</div>';
+
+        echo '<div class="yse-card">';
+        echo '<h3>Import</h3>';
+        echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+        wp_nonce_field('yse_import_settings', 'yse_import_nonce');
+        echo '<input type="hidden" name="action" value="yse_import"/>';
+        echo '<p>Paste previously exported JSON here. This will replace current settings.</p>';
+        echo '<textarea name="yse_import_json" class="large-text code yse-mono" rows="12" required></textarea>';
+        echo '<p><button class="button button-primary">Import Settings</button></p>';
+        echo '</form>';
+        echo '</div>';
+        echo '</div>';
+    }
+
+    public function handle_import(){
+        if (!current_user_can('manage_options')) wp_die('Unauthorized', 403);
+        if (!isset($_POST['yse_import_nonce']) || !wp_verify_nonce($_POST['yse_import_nonce'], 'yse_import_settings')) wp_die('Invalid nonce', 400);
+
+        $raw = isset($_POST['yse_import_json']) ? (string) wp_unslash($_POST['yse_import_json']) : '';
+        $data = json_decode($raw, true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)){
+            wp_redirect(add_query_arg(['page'=>'yse-settings','settings-updated'=>'false','yse_import'=>'fail'], admin_url('options-general.php')));
+            exit;
+        }
+        // Minimal hardening: only accept known keys
+        $allowed = [
+            'org_name','org_url','org_logo','same_as','identifier','is_local','lb_subtype',
+            'addr_street','addr_city','addr_region','addr_postal','addr_country','telephone',
+            'geo_lat','geo_lng','opening_hours','service_area',
+            'slug_about','slug_contact','faq_shortcode','howto_shortcode','extra_faq_slug',
+            'cpt_map','entity_mentions','override_org'
+        ];
+        $filtered = array_intersect_key($data, array_flip($allowed));
+        update_option(self::OPT_KEY, $filtered);
+        wp_redirect(add_query_arg(['page'=>'yse-settings','settings-updated'=>'true','yse_import'=>'ok'], admin_url('options-general.php')));
+        exit;
+    }
+
     public function render_settings_page(){
         $yoast_ok     = $this->yoast_available();
         $yoast_local  = $this->yoast_local_available();
@@ -268,6 +357,13 @@ class YSE_Agency_UI {
         <div class="wrap">
             <h1>Schema Extender</h1>
             <?php settings_errors(self::OPT_KEY); ?>
+            <?php if(isset($_GET['yse_import'])): ?>
+                <?php if($_GET['yse_import']==='ok'): ?>
+                    <div class="notice notice-success"><p>Import completed.</p></div>
+                <?php elseif($_GET['yse_import']==='fail'): ?>
+                    <div class="notice notice-error"><p>Import failed: invalid JSON.</p></div>
+                <?php endif; ?>
+            <?php endif; ?>
             <?php if(!$yoast_ok): ?>
                 <div class="notice notice-warning"><p>Yoast SEO not detected. The schema extensions will be inactive until Yoast SEO is active.</p></div>
             <?php endif; ?>
@@ -352,6 +448,8 @@ class YSE_Agency_UI {
         $out['geo_lat']      = sanitize_text_field($in['geo_lat'] ?? '');
         $out['geo_lng']      = sanitize_text_field($in['geo_lng'] ?? '');
         $out['opening_hours']= $this->sanitize_json_field($in['opening_hours'] ?? '[]', [], 'opening_hours', 'Opening Hours');
+        // Service Areas
+        $out['service_area'] = $this->sanitize_lines_as_text($in['service_area'] ?? '');
         // Intent
         $out['slug_about']     = sanitize_title($in['slug_about'] ?? '');
         $out['slug_contact']   = sanitize_title($in['slug_contact'] ?? '');
@@ -375,6 +473,16 @@ class YSE_Agency_UI {
             if ($u) $urls[] = $u;
         }
         return $urls;
+    }
+
+    private function sanitize_lines_as_text($raw){
+        $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$raw)));
+        $safe  = [];
+        foreach($lines as $l){
+            $l = wp_strip_all_tags($l);
+            if ($l !== '') $safe[] = $l;
+        }
+        return array_values(array_unique($safe));
     }
 
     /** Validate a JSON field and register a settings error on failure. */
@@ -478,7 +586,6 @@ class YSE_Agency_UI {
 
     /** Curated list of common Schema.org types for type-ahead. */
     private static function common_schema_types(){
-        // Keep this focused but broad (editor-friendly).
         return [
             'Article','BlogPosting','NewsArticle','TechArticle',
             'AboutPage','ContactPage','FAQPage','HowTo','ItemPage','ProfilePage','CollectionPage','WebPage',
@@ -501,7 +608,7 @@ class YSE_Agency_UI {
     }
 
     /* ------------------------
-     * Per-post metabox (overrides) with type-ahead
+     * Per-post metabox (overrides) with type-ahead + service area
      * ----------------------*/
     public function add_metabox(){
         $post_types = get_post_types(['public'=>true],'names');
@@ -515,9 +622,10 @@ class YSE_Agency_UI {
         wp_nonce_field('yse_meta_save', 'yse_meta_nonce');
 
         $enabled   = get_post_meta($post->ID, '_yse_override_enabled', true) === '1';
-        $pieceType = get_post_meta($post->ID, '_yse_piece_type', true);   // e.g., Service, Place, SoftwareApplication
-        $pageType  = get_post_meta($post->ID, '_yse_webpage_type', true); // e.g., ContactPage, AboutPage, FAQPage, HowTo
+        $pieceType = get_post_meta($post->ID, '_yse_piece_type', true);
+        $pageType  = get_post_meta($post->ID, '_yse_webpage_type', true);
         $mentions  = get_post_meta($post->ID, '_yse_entity_mentions', true);
+        $service_cities = get_post_meta($post->ID, '_yse_service_area_cities', true);
 
         $page_types = ['','AboutPage','ContactPage','FAQPage','HowTo','ProfilePage','CollectionPage','ItemPage','WebPage'];
         $common = self::common_schema_types();
@@ -525,7 +633,6 @@ class YSE_Agency_UI {
         echo '<div class="yse-meta">';
         echo '<p><label><input type="checkbox" name="yse_override_enabled" value="1" '.checked($enabled,true,false).'/> Enable per-page override</label></p>';
 
-        // Schema type input with datalist + optional select helper
         echo '<p><label for="yse_piece_type"><strong>Schema Type</strong></label></p>';
         echo '<div class="inline">';
         echo '<select id="yse_piece_type_select" class="widefat" aria-label="Common schema types helper">';
@@ -537,9 +644,7 @@ class YSE_Agency_UI {
         echo '</div>';
         echo '<input type="text" class="widefat" id="yse_piece_type" name="yse_piece_type" list="yse_schema_types" value="'.esc_attr($pieceType).'" placeholder="Start typing: Service, Place, SoftwareApplication..."/>';
         echo '<datalist id="yse_schema_types">';
-        foreach($common as $opt){
-            printf('<option value="%s">', esc_attr($opt));
-        }
+        foreach($common as $opt){ printf('<option value="%s">', esc_attr($opt)); }
         echo '</datalist>';
         echo '<small>Choose from the list or type a custom Schema.org type. We’ll validate it.</small>';
 
@@ -551,8 +656,13 @@ class YSE_Agency_UI {
         echo '</select><small>Overrides automatic detection (About/Contact/FAQ/HowTo).</small></p>';
 
         echo '<p><label for="yse_entity_mentions"><strong>about/mentions JSON (optional)</strong></label><br/>';
-        echo '<textarea id="yse_entity_mentions" name="yse_entity_mentions" class="widefat yse-mono" rows="6">'.esc_textarea($mentions).'</textarea>';
-        echo '<small>ELI5: Authoritative topic links (Wikipedia/Wikidata). Format: JSON array of {\"@id\":\"...\"}.</small></p>';
+        echo '<textarea id="yse_entity_mentions" name="yse_entity_mentions" class="widefat yse-mono" rows="5">'.esc_textarea($mentions).'</textarea>';
+        echo '<small>JSON array of {\"@id\":\"...\"} links (Wikipedia/Wikidata).</small></p>';
+
+        echo '<p><label for="yse_service_area_cities"><strong>Service Area – Cities (one per line)</strong></label><br/>';
+        echo '<textarea id="yse_service_area_cities" name="yse_service_area_cities" class="widefat yse-mono" rows="5">'.esc_textarea($service_cities).'</textarea>';
+        echo '<small>Only fill this if this page has a custom service area. One city per line.</small></p>';
+
         echo '</div>';
     }
 
@@ -570,7 +680,7 @@ class YSE_Agency_UI {
         $pageType = isset($_POST['yse_webpage_type']) ? preg_replace('/[^A-Za-z]/','', sanitize_text_field($_POST['yse_webpage_type'])) : '';
         if ($pageType) update_post_meta($post_id, '_yse_webpage_type', $pageType); else delete_post_meta($post_id, '_yse_webpage_type');
 
-        // JSON mentions (validate; store raw JSON string for transparency)
+        // JSON mentions (validate; store raw JSON string prettified)
         $mentions_raw = isset($_POST['yse_entity_mentions']) ? trim((string)wp_unslash($_POST['yse_entity_mentions'])) : '';
         if ($mentions_raw !== ''){
             $decoded = json_decode($mentions_raw, true);
@@ -584,6 +694,55 @@ class YSE_Agency_UI {
             }
         } else {
             delete_post_meta($post_id, '_yse_entity_mentions');
+        }
+
+        // Service area per-page
+        $cities_raw = isset($_POST['yse_service_area_cities']) ? (string) wp_unslash($_POST['yse_service_area_cities']) : '';
+        if ($cities_raw !== '') {
+            $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $cities_raw)));
+            $lines = array_values(array_unique(array_map('wp_strip_all_tags', $lines)));
+            update_post_meta($post_id, '_yse_service_area_cities', implode("\n", $lines));
+        } else {
+            delete_post_meta($post_id, '_yse_service_area_cities');
+        }
+    }
+
+    /* ------------------------
+     * Admin list columns (Schema Type / Service Areas)
+     * ----------------------*/
+    public function register_admin_columns(){
+        $post_types = get_post_types(['public'=>true],'names');
+        foreach ($post_types as $pt){
+            add_filter("manage_{$pt}_posts_columns", function($cols){
+                $cols['yse_schema'] = 'Schema Type';
+                $cols['yse_service_area'] = 'Service Areas';
+                return $cols;
+            });
+            add_action("manage_{$pt}_posts_custom_column", function($col, $post_id){
+                if ($col === 'yse_schema'){
+                    $enabled = get_post_meta($post_id, '_yse_override_enabled', true) === '1';
+                    $type = get_post_meta($post_id, '_yse_piece_type', true);
+                    if ($enabled && $type){
+                        echo '<span class="dashicons dashicons-yes" title="Override enabled"></span> '.esc_html($type);
+                    } elseif ($enabled){
+                        echo '<span class="dashicons dashicons-yes" title="Override enabled"></span> (inherit)';
+                    } else {
+                        echo '<span class="dashicons dashicons-minus"></span> default';
+                    }
+                }
+                if ($col === 'yse_service_area'){
+                    $lines = get_post_meta($post_id, '_yse_service_area_cities', true);
+                    $count = 0;
+                    if ($lines){
+                        $count = count(array_filter(array_map('trim', explode("\n", $lines))));
+                    }
+                    if ($count > 0){
+                        echo esc_html($count).' city'.($count>1?'ies':'');
+                    } else {
+                        echo '—';
+                    }
+                }
+            }, 10, 2);
         }
     }
 
@@ -625,26 +784,52 @@ class YSE_Agency_UI {
                 $data['identifier'] = array_values(array_merge($data['identifier'] ?? [], $s['identifier']));
             }
 
-            if ($is_local && !$yoast_local_active) {
-                $addr = array_filter([
-                    '@type'           => 'PostalAddress',
-                    'streetAddress'   => $s['addr_street'] ?? '',
-                    'addressLocality' => $s['addr_city'] ?? '',
-                    'addressRegion'   => $s['addr_region'] ?? '',
-                    'postalCode'      => $s['addr_postal'] ?? '',
-                    'addressCountry'  => $s['addr_country'] ?? '',
-                ]);
-                if (!empty($addr['streetAddress'])) {
-                    if ($override || empty($data['address'])) $data['address'] = $addr;
-                }
-                if (!empty($s['telephone']) && ($override || empty($data['telephone']))) $data['telephone'] = $s['telephone'];
-                if (!empty($s['opening_hours']) && is_array($s['opening_hours']) && !empty($s['opening_hours'])) {
-                    if ($override || empty($data['openingHoursSpecification'])) $data['openingHoursSpecification'] = $s['opening_hours'];
-                }
-                if (!empty($s['geo_lat']) && !empty($s['geo_lng'])) {
-                    if ($override || empty($data['geo'])) {
-                        $data['geo'] = ['@type'=>'GeoCoordinates','latitude'=>$s['geo_lat'],'longitude'=>$s['geo_lng']];
+            // Per-page service area override (wins when set)
+            if (is_singular()){
+                $pid = get_queried_object_id();
+                if ($pid){
+                    $override_lines = get_post_meta($pid, '_yse_service_area_cities', true);
+                    if ($override_lines){
+                        $city_list = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $override_lines)));
+                        if ($city_list){
+                            $data['areaServed'] = array_map(function($n){
+                                return ['@type'=>'City','name'=>wp_strip_all_tags($n)];
+                            }, array_values(array_unique($city_list)));
+                            // no merge when per-page override is present
+                            return $data;
+                        }
                     }
+                }
+            }
+
+            // Global Service Areas (merge + dedupe)
+            if (!empty($s['service_area']) && is_array($s['service_area'])){
+                $cities = [];
+                foreach ($s['service_area'] as $name) {
+                    $name = wp_strip_all_tags($name);
+                    if ($name!=='') $cities[] = [ '@type' => 'City', 'name' => $name ];
+                }
+                if (!empty($cities)){
+                    $existing = isset($data['areaServed']) ? (array) $data['areaServed'] : [];
+                    $merged   = array_merge($existing, $cities);
+
+                    $seen = [];
+                    $deduped = [];
+                    foreach ($merged as $it) {
+                        if (is_array($it) && isset($it['name'])) {
+                            $key = 'city:'.strtolower($it['name']);
+                        } elseif (is_string($it)) {
+                            $key = 'txt:'.strtolower($it);
+                            $it = [ '@type'=>'City', 'name'=>$it ];
+                        } else {
+                            $key = md5(maybe_serialize($it));
+                        }
+                        if (!isset($seen[$key])) {
+                            $seen[$key] = true;
+                            $deduped[] = $it;
+                        }
+                    }
+                    $data['areaServed'] = $deduped;
                 }
             }
 
