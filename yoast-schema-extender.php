@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
- * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, JSON validation, type-ahead schema picker, Service Areas (global & per-page), admin columns, Import/Export, and 3-tier LocalBusiness subtypes.
- * Version: 1.7.5
+ * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, JSON validation, type-ahead schema picker, Service Areas (global & per-page), Import/Export, 3-tier LocalBusiness subtypes, and a robust Auto-FAQ that parses FINAL HTML (ACF Flexible Content & builders compatible) without duplicating Yoast.
+ * Version: 1.8.1
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -41,6 +41,9 @@ class YSE_Agency_UI {
                 $this->hook_schema_filters();
             }
         });
+
+        // Auto-FAQ: start output buffering on singular pages (front-end only)
+        add_action('template_redirect', [$this,'maybe_buffer_auto_faq']);
     }
 
     /* ------------------------
@@ -75,14 +78,13 @@ class YSE_Agency_UI {
         wp_enqueue_media();
 
         // Register empty handles and inject inline assets to avoid 404s.
-        wp_register_script('yse-admin', '', [], '1.7.5', true);
+        wp_register_script('yse-admin', '', [], '1.8.1', true);
         wp_enqueue_script('yse-admin');
 
         $inline_js = <<<'JS'
 /* --- YSE Admin Helpers (no external file) --- */
 
 // Cascading LocalBusiness subtype tiers.
-// Tier1 -> Tier2 -> Tier3 maps
 const YSE_LB_TREE = {
   // Families (Tier 1) → children (Tier 2)
   'ProfessionalService': { children: ['AccountingService','FinancialService','InsuranceAgency','LegalService','RealEstateAgent'] },
@@ -138,7 +140,6 @@ function yseInitSubtypeCascades(){
     ysePopulateSelect(sub3, tier3, '(Subtype level 3 — optional)');
   };
 
-  // Initial repopulate with saved values (WordPress retains select values)
   refresh();
 
   main.addEventListener('change', ()=>{
@@ -209,13 +210,12 @@ jQuery(function($){
     setTimeout(()=>$(this).text('Copy'), 1200);
   });
 
-  // Init cascades on settings page
   yseInitSubtypeCascades();
 });
 JS;
         wp_add_inline_script('yse-admin', $inline_js);
 
-        wp_register_style('yse-admin-css', false, [], '1.7.5');
+        wp_register_style('yse-admin-css', false, [], '1.8.1');
         wp_enqueue_style('yse-admin-css');
         $inline_css = <<<'CSS'
 .yse-field { margin: 12px 0; }
@@ -310,6 +310,24 @@ CSS;
             'key'=>'entity_mentions','type'=>'textarea','options'=>'entity_mentions','help'=>'We add to both about and mentions.'
         ]);
 
+        // Auto-FAQ
+        add_settings_section('yse_auto_faq', 'Auto-FAQ (Final HTML Scanner)', function(){
+            echo '<p>Automatically emits a <strong>FAQPage</strong> JSON-LD by parsing the final rendered HTML (works with ACF Flexible Content & builders). Injects at the end of &lt;body&gt; <em>only if no FAQPage is already present</em>, so it plays nice with Yoast.</p>';
+        }, 'yse-settings');
+        $auto = [
+            ['auto_faq_enable','Enable Auto-FAQ','checkbox','', 'Parses final HTML and injects FAQ JSON-LD if none exists.'],
+            ['auto_faq_heading','FAQ Section Title','text','', 'Phrase to detect the FAQ section title. Default: <code>Frequently Asked Questions</code>.'],
+            ['auto_faq_max','Max Q&A to include','number','', '1–50. Default 20.'],
+            ['auto_faq_parse_details','Parse &lt;details&gt; pattern','checkbox','', 'Treat &lt;summary&gt; as the question, rest as the answer.'],
+            ['auto_faq_parse_containers','Parse .faq/.faqs containers','checkbox','', 'Looks for .faq/.faqs and .faq-item markup.'],
+            ['auto_faq_parse_headings','Parse H2/H3 ending with “?”','checkbox','', 'Question in heading; answer in following sibling blocks.'],
+        ];
+        foreach ($auto as $f){
+            add_settings_field($f[0], $f[1], [$this,'render_field'], 'yse-settings', 'yse_auto_faq', [
+                'key'=>$f[0],'type'=>$f[2],'help'=>$f[4]??''
+            ]);
+        }
+
         // Compatibility
         add_settings_section('yse_overrides','Compatibility', function(){
             echo '<p>By default, we <strong>merge</strong> with Yoast Site Representation (fill blanks, merge lists). Turn on override to let your values win.</p>';
@@ -324,6 +342,10 @@ CSS;
         $opt = get_option(self::OPT_KEY, []);
         $val = isset($opt[$key]) ? $opt[$key] : '';
 
+        // Defaults for Auto-FAQ controls (display layer)
+        if ($key === 'auto_faq_heading' && $val==='') $val = 'Frequently Asked Questions';
+        if ($key === 'auto_faq_max' && $val==='') $val = 20;
+
         echo '<div class="yse-field">';
         if ($type==='text' || $type==='url'){
             printf('<input type="%s" class="regular-text" name="%s[%s]" id="%s" value="%s"/>',
@@ -331,6 +353,11 @@ CSS;
             if ($key==='org_logo'){
                 echo ' <button class="button yse-media" data-target="'.esc_attr($key).'">Select</button>';
             }
+        } elseif ($type==='number'){
+            $min = ($key==='auto_faq_max') ? 1 : 1;
+            $max = ($key==='auto_faq_max') ? 50 : 100;
+            printf('<input type="number" min="%d" max="%d" step="1" class="small-text" name="%s[%s]" id="%s" value="%s"/>',
+                $min, $max, esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_attr($val));
         } elseif ($type==='textarea'){
             $is_json_field = in_array($key, ['identifier','opening_hours','entity_mentions'], true);
             if ($is_json_field){
@@ -359,8 +386,11 @@ CSS;
                 echo '<div class="yse-help">One city per line. We output structured <code>City</code> objects into <code>areaServed</code>.</div>';
             }
         } elseif ($type==='checkbox'){
+            // Default ON for Auto-FAQ toggles when option not yet saved
+            $defaults_on = in_array($key, ['auto_faq_enable','auto_faq_parse_details','auto_faq_parse_containers','auto_faq_parse_headings'], true);
+            $current = ($val === '') ? ($defaults_on ? '1' : '0') : $val;
             printf('<label><input type="checkbox" name="%s[%s]" value="1" %s/> Enable</label>',
-                esc_attr(self::OPT_KEY), esc_attr($key), checked($val, '1', false));
+                esc_attr(self::OPT_KEY), esc_attr($key), checked($current, '1', false));
         } elseif ($type==='select'){
             $is_dep = in_array($key, ['lb_subtype2','lb_subtype3'], true);
             $data_current = $is_dep ? ' data-current="'.esc_attr($val).'"' : '';
@@ -431,7 +461,8 @@ CSS;
             'addr_street','addr_city','addr_region','addr_postal','addr_country','telephone',
             'geo_lat','geo_lng','opening_hours','service_area',
             'slug_about','slug_contact','faq_shortcode','howto_shortcode','extra_faq_slug',
-            'cpt_map','entity_mentions','override_org'
+            'cpt_map','entity_mentions','override_org',
+            'auto_faq_enable','auto_faq_heading','auto_faq_max','auto_faq_parse_details','auto_faq_parse_containers','auto_faq_parse_headings'
         ];
         $filtered = array_intersect_key($data, array_flip($allowed));
         update_option(self::OPT_KEY, $filtered);
@@ -561,6 +592,15 @@ CSS;
 
         // CPT map
         $out['cpt_map'] = $this->sanitize_cpt_map($in['cpt_map'] ?? '');
+
+        // Auto-FAQ controls
+        $out['auto_faq_enable']           = !empty($in['auto_faq_enable']) ? '1' : '0';
+        $out['auto_faq_heading']          = sanitize_text_field($in['auto_faq_heading'] ?? '');
+        $max                               = isset($in['auto_faq_max']) ? intval($in['auto_faq_max']) : 20;
+        $out['auto_faq_max']              = max(1, min(50, $max));
+        $out['auto_faq_parse_details']    = !empty($in['auto_faq_parse_details']) ? '1' : '0';
+        $out['auto_faq_parse_containers'] = !empty($in['auto_faq_parse_containers']) ? '1' : '0';
+        $out['auto_faq_parse_headings']   = !empty($in['auto_faq_parse_headings']) ? '1' : '0';
 
         // Overrides
         $out['override_org'] = !empty($in['override_org']) ? '1' : '0';
@@ -1023,7 +1063,7 @@ CSS;
             return $data;
         }, 20);
 
-        // Graph additions (CPT → Schema, Breadcrumb, FAQ, Video) with per-post piece override
+        // Graph additions (CPT → Schema, Breadcrumb, Video) with per-post piece override
         add_filter('wpseo_schema_graph_pieces', function($pieces, $context){
             if (!is_singular()) return $pieces;
             $s = get_option(self::OPT_KEY, []);
@@ -1041,7 +1081,7 @@ CSS;
                 $type = preg_replace('/[^A-Za-z]/','', $map[$ptype]);
             }
 
-            if ($type){
+            if ($type && class_exists('\Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece')){
                 $pieces[] = new class($context, $type, $post) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
                     private $type; private $post;
                     public function __construct($context, $type, $post){ parent::__construct($context); $this->type=$type; $this->post=$post; }
@@ -1081,40 +1121,26 @@ CSS;
             }
 
             // BreadcrumbList (simple two-level)
-            $pieces[] = new class($context) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
-                public function is_needed(){ return true; }
-                public function generate(){
-                    $crumbs = [];
-                    $pos = 1;
-                    $crumbs[] = ['@type'=>'ListItem','position'=>$pos++,'item'=>['@id'=>home_url('/'),'name'=>get_bloginfo('name')]];
-                    if (is_singular()){
-                        $crumbs[] = ['@type'=>'ListItem','position'=>$pos++,'item'=>['@id'=>get_permalink(),'name'=>get_the_title()]];
-                    }
-                    return ['@type'=>'BreadcrumbList','@id'=>get_permalink().'#/schema/breadcrumb','itemListElement'=>$crumbs];
-                }
-            };
-
-            // Lightweight FAQ auto-detect (visible H2/H3/H4 Q? + P answer)
-            $content_full = $post ? apply_filters('the_content', $post->post_content) : '';
-            if ($content_full && preg_match_all('/<h[2-4][^>]*>([^<\?]+)\?\s*<\/h[2-4]>\s*<p[^>]*>(.+?)<\/p>/si', $content_full, $m_qas)){
-                if (count($m_qas[1]) >= 2){
-                    $pieces[] = new class($context, $m_qas) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
-                        private $m;
-                        public function __construct($context,$m){ parent::__construct($context); $this->m=$m; }
-                        public function is_needed(){ return true; }
-                        public function generate(){
-                            $qs = $this->m[1]; $as = $this->m[2]; $items=[];
-                            foreach($qs as $i=>$q){
-                                $items[] = ['@type'=>'Question','name'=>wp_strip_all_tags($q.'?'),'acceptedAnswer'=>['@type'=>'Answer','text'=>wp_kses_post($as[$i] ?? '')]];
-                            }
-                            return ['@type'=>'FAQPage','@id'=>get_permalink().'#/schema/faq','mainEntity'=>$items];
+            if (class_exists('\Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece')){
+                $pieces[] = new class($context) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
+                    public function is_needed(){ return true; }
+                    public function generate(){
+                        $crumbs = [];
+                        $pos = 1;
+                        $crumbs[] = ['@type'=>'ListItem','position'=>$pos++,'item'=>['@id'=>home_url('/'),'name'=>get_bloginfo('name')]];
+                        if (is_singular()){
+                            $crumbs[] = ['@type'=>'ListItem','position'=>$pos++,'item'=>['@id'=>get_permalink(),'name'=>get_the_title()]];
                         }
-                    };
-                }
+                        return ['@type'=>'BreadcrumbList','@id'=>get_permalink().'#/schema/breadcrumb','itemListElement'=>$crumbs];
+                    }
+                };
             }
 
+            // NOTE: We intentionally do not emit a FAQ piece here; Auto-FAQ handles final HTML and avoids duplicates.
+
             // VideoObject (YouTube/Vimeo detection)
-            if ($content_full && preg_match('/<iframe[^>]+src="[^"]*(youtube|vimeo)\.com[^"]+"/i', $content_full)){
+            $content_full = $post ? apply_filters('the_content', $post->post_content) : '';
+            if ($content_full && preg_match('/<iframe[^>]+src="[^"]*(youtube|vimeo)\.com[^"]+"/i', $content_full) && class_exists('\Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece')){
                 $pieces[] = new class($context) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
                     public function is_needed(){ return true; }
                     public function generate(){
@@ -1153,6 +1179,230 @@ CSS;
                 }
             }
         });
+    }
+
+    /* ------------------------
+     * Auto-FAQ: FINAL HTML parser & safe injector
+     * ----------------------*/
+    public function maybe_buffer_auto_faq(){
+        if (is_admin() || is_feed() || is_embed() || (defined('REST_REQUEST') && REST_REQUEST)) return;
+        if (!is_singular()) return;
+
+        $s = get_option(self::OPT_KEY, []);
+        $enabled = isset($s['auto_faq_enable']) ? ($s['auto_faq_enable'] === '1') : true; // default ON
+        if (!$enabled) return;
+
+        // If DOM isn't available, skip gracefully (no fatal).
+        if (!class_exists('DOMDocument') || !class_exists('DOMXPath')) return;
+
+        ob_start([$this,'auto_faq_buffer_callback']);
+    }
+
+    public function auto_faq_buffer_callback($html){
+        try {
+            // Sanity
+            if (!is_string($html) || $html === '' || stripos($html, '<body') === false) {
+                return $html;
+            }
+
+            // If a FAQPage is already present (Yoast or others), do nothing
+            if (stripos($html, '"@type":"FAQPage"') !== false || stripos($html, '"@type": "FAQPage"') !== false || stripos($html, '"FAQPage"') !== false) {
+                return $html;
+            }
+
+            $pairs = $this->extract_faq_pairs_from_html($html);
+            if (empty($pairs)) return $html;
+
+            $permalink = function_exists('get_permalink') ? get_permalink() : '';
+            $faq = [
+                '@context'   => 'https://schema.org',
+                '@type'      => 'FAQPage',
+                '@id'        => trailingslashit($permalink) . '#faq',
+                'mainEntity' => array_map(function($p){
+                    return [
+                        '@type' => 'Question',
+                        'name'  => $p['q'],
+                        'acceptedAnswer' => [
+                            '@type' => 'Answer',
+                            'text'  => $p['a'],
+                        ],
+                    ];
+                }, $pairs),
+            ];
+
+            $script = "\n<script type=\"application/ld+json\">"
+                    . wp_json_encode($faq, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)
+                    . "</script>\n";
+
+            // Inject before </body>. If not found, append.
+            $out = preg_replace('~</body\s*>~i', $script . '</body>', $html, 1, $count);
+            if ($count < 1) $out = $html . $script;
+            return $out;
+        } catch (\Throwable $e) {
+            // Fail silently—never take the site down for FAQ niceties.
+            return $html;
+        }
+    }
+
+    private function extract_faq_pairs_from_html($html){
+        $s = get_option(self::OPT_KEY, []);
+        $heading_phrase = isset($s['auto_faq_heading']) && $s['auto_faq_heading'] !== '' ? $s['auto_faq_heading'] : 'Frequently Asked Questions';
+        $max_items      = isset($s['auto_faq_max']) && intval($s['auto_faq_max']) ? max(1, min(50, intval($s['auto_faq_max']))) : 20;
+        $do_details     = isset($s['auto_faq_parse_details']) ? ($s['auto_faq_parse_details']==='1') : true;
+        $do_containers  = isset($s['auto_faq_parse_containers']) ? ($s['auto_faq_parse_containers']==='1') : true;
+        $do_headings    = isset($s['auto_faq_parse_headings']) ? ($s['auto_faq_parse_headings']==='1') : true;
+
+        if (!class_exists('DOMDocument') || !class_exists('DOMXPath')) return [];
+
+        // Suppress libxml warnings if available
+        if (function_exists('libxml_use_internal_errors')) {
+            libxml_use_internal_errors(true);
+        }
+        $dom = new DOMDocument();
+
+        $loaded = @$dom->loadHTML('<?xml encoding="utf-8" ?>' . $html);
+        if (function_exists('libxml_clear_errors')) {
+            libxml_clear_errors();
+        }
+        if (!$loaded) return [];
+
+        $xp = new DOMXPath($dom);
+        $txt = static function($n) {
+            $t = '';
+            foreach ($n->childNodes as $c) {
+                if ($c instanceof DOMText) { $t .= $c->wholeText; }
+                elseif ($c instanceof DOMElement && !in_array(strtolower($c->tagName), ['script','style','noscript'])) {
+                    $t .= ' ' . $c->textContent;
+                }
+            }
+            return preg_replace('/\s+/u', ' ', trim($t ?? ''));
+        };
+
+        $pairs = [];
+
+        // ---------- Pattern 0: Scoped under a specific FAQ heading phrase ----------
+        $faqHeading = null;
+        if ($heading_phrase !== '') {
+            $pattern = '/^\s*' . preg_quote($heading_phrase, '/') . '\s*$/iu';
+            foreach ($xp->query('//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6]') as $h) {
+                if (preg_match($pattern, $txt($h))) { $faqHeading = $h; break; }
+            }
+        }
+
+        $collectUntilNextSection = function($start) {
+            $nodes = [];
+            for ($n = $start->nextSibling; $n; $n = $n->nextSibling) {
+                if ($n instanceof DOMElement && in_array(strtolower($n->nodeName), ['h1','h2','h3'])) break;
+                if ($n instanceof DOMElement || $n instanceof DOMText) $nodes[] = $n;
+            }
+            return $nodes;
+        };
+
+        $appendQAFromRun = function(array $nodes, $txtFn) use (&$pairs, $max_items) {
+            $chunks = [];
+            foreach ($nodes as $n) {
+                if ($n instanceof DOMElement || $n instanceof DOMText) {
+                    $t = $txtFn($n);
+                    if ($t !== '') $chunks[] = [$n, $t];
+                }
+            }
+            $i = 0;
+            while ($i < count($chunks) && count($pairs) < $max_items) {
+                [, $t] = $chunks[$i];
+                if (preg_match('/\?\s*$/u', $t) && mb_strlen($t,'UTF-8') <= 180) {
+                    $q = $t; $i++;
+                    $ans = [];
+                    while ($i < count($chunks)) {
+                        [, $t2] = $chunks[$i];
+                        if (preg_match('/\?\s*$/u', $t2) && mb_strlen($t2,'UTF-8') <= 180) break;
+                        if ($t2 !== '') $ans[] = $t2;
+                        $i++;
+                    }
+                    $a = trim(implode("\n\n", $ans));
+                    if ($q && $a) $pairs[] = ['q'=>$q,'a'=>$a];
+                } else { $i++; }
+                if (count($pairs) >= $max_items) break;
+            }
+        };
+
+        if ($faqHeading) {
+            $sectionNodes = $collectUntilNextSection($faqHeading);
+            $appendQAFromRun($sectionNodes, $txt);
+        }
+
+        // ---------- Pattern 1: <details><summary>Q</summary>Answer ----------
+        if ($do_details) {
+            foreach ($xp->query('//details[summary]') as $det) {
+                $sum = $det->getElementsByTagName('summary')->item(0);
+                if ($sum) {
+                    $q = trim($sum->textContent);
+                    $aParts = [];
+                    foreach ($det->childNodes as $c) {
+                        if ($c === $sum) continue;
+                        $t = $txt($c);
+                        if ($t !== '') $aParts[] = $t;
+                    }
+                    $a = trim(implode("\n\n", $aParts));
+                    if ($q && $a) $pairs[] = ['q'=>$q,'a'=>$a];
+                    if (count($pairs) >= $max_items) break;
+                }
+            }
+        }
+
+        // ---------- Pattern 2: .faq/.faqs containers ----------
+        if ($do_containers) {
+            foreach ($xp->query('//*[contains(concat(" ", normalize-space(@class), " "), " faq") or contains(concat(" ", normalize-space(@class), " "), " faqs")]') as $fc) {
+                $items = (new DOMXPath($fc->ownerDocument))->query('.//*[contains(@class,"faq-item") or contains(@class,"faq__item")]', $fc);
+                if ($items->length === 0) $items = $fc->childNodes;
+                foreach ($items as $it) {
+                    if ( ! $it instanceof DOMElement) continue;
+                    $qNode = (new DOMXPath($it->ownerDocument))->query('.//*[contains(@class,"question") or self::h2 or self::h3 or self::summary]', $it)->item(0);
+                    if ($qNode) {
+                        $q = $txt($qNode);
+                        $a = '';
+                        foreach ($it->childNodes as $c) {
+                            if ($c->isSameNode($qNode)) continue;
+                            $t = $txt($c);
+                            if ($t !== '') $a .= ($a ? "\n\n" : '').$t;
+                        }
+                        if ($q && $a) $pairs[] = ['q'=>$q,'a'=>trim($a)];
+                        if (count($pairs) >= $max_items) break;
+                    }
+                }
+            }
+        }
+
+        // ---------- Pattern 3: Global H2/H3 ending with '?' ----------
+        if ($do_headings) {
+            foreach ($xp->query('//h2|//h3') as $h) {
+                $q = $txt($h);
+                if ($q && preg_match('/\?\s*$/u', $q)) {
+                    $ans = [];
+                    for ($n = $h->nextSibling; $n; $n = $n->nextSibling) {
+                        if ($n instanceof DOMElement && in_array(strtolower($n->tagName), ['h2','h3'])) break;
+                        $t = $txt($n);
+                        if ($t !== '') $ans[] = $t;
+                    }
+                    $a = trim(implode("\n\n", $ans));
+                    if ($q && $a) $pairs[] = ['q'=>$q,'a'=>$a];
+                    if (count($pairs) >= $max_items) break;
+                }
+            }
+        }
+
+        // Dedup / sanitize / cap
+        $clean = []; $seen = [];
+        foreach ($pairs as $p) {
+            $q = wp_strip_all_tags($p['q']);
+            $a = wp_strip_all_tags($p['a']);
+            if ($q === '' || $a === '') continue;
+            $key = md5(mb_strtolower($q,'UTF-8') . '|' . mb_substr($a,0,64,'UTF-8'));
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $clean[] = ['q'=>$q,'a'=>$a];
+            if (count($clean) >= $max_items) break;
+        }
+        return $clean;
     }
 }
 
