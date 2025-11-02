@@ -815,68 +815,79 @@ CSS;
 
         // Organization / LocalBusiness enrichment (merge-first)
         add_filter('wpseo_schema_organization', function($data){
-            $s = get_option(self::OPT_KEY, []);
-            $yoast_local_active = $this->yoast_local_available();
-            $override = !empty($s['override_org']) && $s['override_org'] === '1';
-            $is_local = (!$yoast_local_active) && !empty($s['is_local']) && $s['is_local'] === '1';
+            $s = get_option('yse_settings', []);
 
-            $stack = [];
-            if ($is_local){
-                $stack[] = 'LocalBusiness';
-                foreach (['lb_subtype','lb_subtype2','lb_subtype3'] as $k){
-                    if (!empty($s[$k])) $stack[] = $s[$k];
+            // Always keep Organization in the types for the primary identity.
+            $types = [];
+            if (isset($data['@type'])) {
+                $types = is_array($data['@type']) ? $data['@type'] : [$data['@type']];
+            }
+            if (empty($types)) $types = ['Organization'];
+
+            // Decide if we should add LocalBusiness + subtypes
+            $override           = !empty($s['override_org']) && $s['override_org'] === '1';
+            $yoast_local_active = (defined('WPSEO_LOCAL_VERSION') || class_exists('\Yoast\WP\Local\Main'));
+            $is_local_checked   = !empty($s['is_local']) && $s['is_local'] === '1';
+
+            // NEW: Add LocalBusiness even if Yoast Local is active (we’re not adding a second node, just an extra @type)
+            if ($is_local_checked) {
+                $types[] = 'LocalBusiness';
+                foreach (['lb_subtype','lb_subtype2','lb_subtype3'] as $k) {
+                    if (!empty($s[$k])) $types[] = preg_replace('/[^A-Za-z]/','', $s[$k]);
                 }
-                $stack = array_values(array_unique(array_filter($stack)));
             }
 
-            if ($override){
-                $data['@type'] = $is_local ? (count($stack)===1 ? $stack[0] : $stack) : 'Organization';
-            } else {
-                if (empty($data['@type'])){
-                    $data['@type'] = $is_local ? (count($stack)===1 ? $stack[0] : $stack) : 'Organization';
-                }
-            }
+            // Dedupe + set types
+            $types = array_values(array_unique(array_filter($types)));
+            $data['@type'] = (count($types) === 1) ? $types[0] : $types;
 
+            // Keep stable @id
             if (empty($data['@id'])) {
-                $data['@id'] = $is_local ? home_url('#/schema/localbusiness') : home_url('#/schema/organization');
+                $data['@id'] = home_url('#/schema/organization');
             }
 
-            if ($override || empty($data['name'])) $data['name'] = !empty($s['org_name']) ? $s['org_name'] : ($data['name'] ?? get_bloginfo('name'));
-            if ($override || empty($data['url']))  $data['url']  = !empty($s['org_url'])  ? $s['org_url']  : ($data['url']  ?? home_url('/'));
-            if (!empty($s['org_logo']) && ($override || empty($data['logo']))) $data['logo'] = ['@type'=>'ImageObject','url'=>$s['org_logo']];
+            // Merge/override core properties politely
+            if ($override || empty($data['name'])) {
+                $data['name'] = !empty($s['org_name']) ? $s['org_name'] : ($data['name'] ?? get_bloginfo('name'));
+            }
+            if ($override || empty($data['url'])) {
+                $data['url'] = !empty($s['org_url']) ? $s['org_url'] : ($data['url'] ?? home_url('/'));
+            }
+            if (!empty($s['org_logo']) && ($override || empty($data['logo']))) {
+                $data['logo'] = ['@type'=>'ImageObject','url'=>$s['org_logo']];
+            }
 
+            // sameAs, identifier
             $existing_sameas = isset($data['sameAs']) && is_array($data['sameAs']) ? $data['sameAs'] : [];
             $ours_sameas     = !empty($s['same_as']) ? (array)$s['same_as'] : [];
             $data['sameAs']  = array_values(array_unique(array_filter(array_merge($existing_sameas, $ours_sameas))));
-
             if (!empty($s['identifier']) && is_array($s['identifier'])) {
                 $data['identifier'] = array_values(array_merge($data['identifier'] ?? [], $s['identifier']));
             }
 
-            if ($is_local && !$yoast_local_active) {
-                $addr = array_filter([
-                    '@type'           => 'PostalAddress',
-                    'streetAddress'   => $s['addr_street'] ?? '',
-                    'addressLocality' => $s['addr_city'] ?? '',
-                    'addressRegion'   => $s['addr_region'] ?? '',
-                    'postalCode'      => $s['addr_postal'] ?? '',
-                    'addressCountry'  => $s['addr_country'] ?? '',
-                ]);
-                if (!empty($addr['streetAddress'])) {
-                    if ($override || empty($data['address'])) $data['address'] = $addr;
-                }
-                if (!empty($s['telephone']) && ($override || empty($data['telephone']))) $data['telephone'] = $s['telephone'];
-                if (!empty($s['opening_hours']) && is_array($s['opening_hours']) && !empty($s['opening_hours'])) {
-                    if ($override || empty($data['openingHoursSpecification'])) $data['openingHoursSpecification'] = $s['opening_hours'];
-                }
-                if (!empty($s['geo_lat']) && !empty($s['geo_lng'])) {
-                    if ($override || empty($data['geo'])) {
-                        $data['geo'] = ['@type'=>'GeoCoordinates','latitude'=>$s['geo_lat'],'longitude'=>$s['geo_lng']];
-                    }
+            // Local attributes (safe to include even with Yoast Local present; they’ll merge in the graph)
+            $addr = array_filter([
+                '@type'           => 'PostalAddress',
+                'streetAddress'   => $s['addr_street'] ?? '',
+                'addressLocality' => $s['addr_city'] ?? '',
+                'addressRegion'   => $s['addr_region'] ?? '',
+                'postalCode'      => $s['addr_postal'] ?? '',
+                'addressCountry'  => $s['addr_country'] ?? '',
+            ]);
+            if (!empty($addr['streetAddress'])) {
+                if ($override || empty($data['address'])) $data['address'] = $addr;
+            }
+            if (!empty($s['telephone']) && ($override || empty($data['telephone']))) $data['telephone'] = $s['telephone'];
+            if (!empty($s['opening_hours']) && is_array($s['opening_hours']) && !empty($s['opening_hours'])) {
+                if ($override || empty($data['openingHoursSpecification'])) $data['openingHoursSpecification'] = $s['opening_hours'];
+            }
+            if (!empty($s['geo_lat']) && !empty($s['geo_lng'])) {
+                if ($override || empty($data['geo'])) {
+                    $data['geo'] = ['@type'=>'GeoCoordinates','latitude'=>$s['geo_lat'],'longitude'=>$s['geo_lng']];
                 }
             }
 
-            // Per-page service areas override, else merge global
+            // Service areas (global first, then per-page override)
             if (is_singular()){
                 $pid = get_queried_object_id();
                 if ($pid){
@@ -892,7 +903,6 @@ CSS;
                     }
                 }
             }
-
             $sareas = !empty($s['service_area']) && is_array($s['service_area']) ? $s['service_area'] : [];
             if (!empty($sareas)){
                 $cities = [];
@@ -903,28 +913,17 @@ CSS;
                 if (!empty($cities)){
                     $existing = isset($data['areaServed']) ? (array) $data['areaServed'] : [];
                     $merged   = array_merge($existing, $cities);
-                    $seen = [];
-                    $deduped = [];
+                    $seen = []; $deduped = [];
                     foreach ($merged as $it) {
-                        if (is_array($it) && isset($it['name'])) {
-                            $key = 'city:'.strtolower($it['name']);
-                        } elseif (is_string($it)) {
-                            $key = 'txt:'.strtolower($it);
-                            $it = [ '@type'=>'City', 'name'=>$it ];
-                        } else {
-                            $key = md5(maybe_serialize($it));
-                        }
-                        if (!isset($seen[$key])) {
-                            $seen[$key] = true;
-                            $deduped[] = $it;
-                        }
+                        $key = is_array($it) && isset($it['name']) ? 'city:'.strtolower($it['name']) : md5(maybe_serialize($it));
+                        if (!isset($seen[$key])) { $seen[$key] = true; $deduped[] = $it; }
                     }
                     $data['areaServed'] = $deduped;
                 }
             }
 
             return $data;
-        }, 20);
+        }, 99); // run after Yoast’s own composition
 
         // WebPage tweaks (includes FAQPage detection by slug/shortcode ONLY)
         add_filter('wpseo_schema_webpage', function($data){
