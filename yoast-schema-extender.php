@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (UI + Compatibility, No Woo)
  * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post overrides. Respects Yoast Site Representation (merge-first) with optional override. Skips LocalBusiness enrichment if Yoast Local SEO is active. Includes ELI5 help, JSON validation, type-ahead schema picker, Service Areas (global & per-page), admin columns, Import/Export, and 3-tier LocalBusiness subtypes.
- * Version: 1.7.4
+ * Version: 1.7.5
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -75,7 +75,7 @@ class YSE_Agency_UI {
         wp_enqueue_media();
 
         // Register empty handles and inject inline assets to avoid 404s.
-        wp_register_script('yse-admin', '', [], '1.7.4', true);
+        wp_register_script('yse-admin', '', [], '1.7.5', true);
         wp_enqueue_script('yse-admin');
 
         $inline_js = <<<'JS'
@@ -126,26 +126,19 @@ function yseInitSubtypeCascades(){
   const sub3 = document.getElementById('lb_subtype3');
   if(!main || !sub2 || !sub3) return;
 
-  const current1 = main.getAttribute('data-current') || main.value || '';
-  const current2 = sub2.getAttribute('data-current') || '';
-  const current3 = sub3.getAttribute('data-current') || '';
-
   const refresh = ()=>{
     const t1 = main.value || '';
     const branch = YSE_LB_TREE[t1];
     const tier2 = branch && branch.children ? branch.children : [];
     ysePopulateSelect(sub2, tier2, '(Subtype — optional)');
-    if (current2 && tier2.includes(current2)) sub2.value = current2;
 
     const t2 = sub2.value || '';
     const branch2 = YSE_LB_TREE[t2];
     const tier3 = branch2 && branch2.children ? branch2.children : [];
     ysePopulateSelect(sub3, tier3, '(Subtype level 3 — optional)');
-    if (current3 && tier3.includes(current3)) sub3.value = current3;
   };
 
-  // Initial repopulate with saved values
-  if (current1 && !main.value) main.value = current1;
+  // Initial repopulate with saved values (WordPress retains select values)
   refresh();
 
   main.addEventListener('change', ()=>{
@@ -222,7 +215,7 @@ jQuery(function($){
 JS;
         wp_add_inline_script('yse-admin', $inline_js);
 
-        wp_register_style('yse-admin-css', false, [], '1.7.4');
+        wp_register_style('yse-admin-css', false, [], '1.7.5');
         wp_enqueue_style('yse-admin-css');
         $inline_css = <<<'CSS'
 .yse-field { margin: 12px 0; }
@@ -333,9 +326,8 @@ CSS;
 
         echo '<div class="yse-field">';
         if ($type==='text' || $type==='url'){
-            $data_current = ($key==='lb_subtype') ? ' data-current="'.esc_attr($val).'"' : '';
-            printf('<input type="%s" class="regular-text" name="%s[%s]" id="%s" value="%s"%s/>',
-                esc_attr($type), esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_attr($val), $data_current);
+            printf('<input type="%s" class="regular-text" name="%s[%s]" id="%s" value="%s"/>',
+                esc_attr($type), esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_attr($val));
             if ($key==='org_logo'){
                 echo ' <button class="button yse-media" data-target="'.esc_attr($key).'">Select</button>';
             }
@@ -533,8 +525,16 @@ CSS;
         $out['org_name']  = sanitize_text_field($in['org_name'] ?? '');
         $out['org_url']   = esc_url_raw($in['org_url'] ?? '');
         $out['org_logo']  = esc_url_raw($in['org_logo'] ?? '');
-        $out['same_as']   = $this->sanitize_lines_as_urls($in['same_as'] ?? '');
-        $out['identifier']= $this->sanitize_json_field($in['identifier'] ?? '[]', [], 'identifier', 'Identifiers');
+
+        // Multi-line helpers unslash internally
+        $out['same_as']     = $this->sanitize_lines_as_urls($in['same_as'] ?? '');
+        $out['service_area']= $this->sanitize_lines_as_text($in['service_area'] ?? '');
+
+        // JSON fields (sanitizer handles unslash + normalization)
+        $out['identifier']      = $this->sanitize_json_field($in['identifier'] ?? '[]', [], 'identifier', 'Identifiers');
+        $out['opening_hours']   = $this->sanitize_json_field($in['opening_hours'] ?? '[]', [], 'opening_hours', 'Opening Hours');
+        $out['entity_mentions'] = $this->sanitize_json_field($in['entity_mentions'] ?? '[]', [], 'entity_mentions', 'Topic Mentions');
+
         $out['is_local']  = !empty($in['is_local']) ? '1' : '0';
 
         // LocalBusiness subtype tiers
@@ -551,10 +551,6 @@ CSS;
         $out['telephone']    = sanitize_text_field($in['telephone'] ?? '');
         $out['geo_lat']      = sanitize_text_field($in['geo_lat'] ?? '');
         $out['geo_lng']      = sanitize_text_field($in['geo_lng'] ?? '');
-        $out['opening_hours']= $this->sanitize_json_field($in['opening_hours'] ?? '[]', [], 'opening_hours', 'Opening Hours');
-
-        // Service Areas
-        $out['service_area'] = $this->sanitize_lines_as_text($in['service_area'] ?? '');
 
         // Intent
         $out['slug_about']     = sanitize_title($in['slug_about'] ?? '');
@@ -566,15 +562,14 @@ CSS;
         // CPT map
         $out['cpt_map'] = $this->sanitize_cpt_map($in['cpt_map'] ?? '');
 
-        // Mentions
-        $out['entity_mentions'] = $this->sanitize_json_field($in['entity_mentions'] ?? '[]', [], 'entity_mentions', 'Topic Mentions');
-
         // Overrides
         $out['override_org'] = !empty($in['override_org']) ? '1' : '0';
         return $out;
     }
 
     private function sanitize_lines_as_urls($raw){
+        // WordPress magic slashes → remove first
+        $raw = is_string($raw) ? wp_unslash($raw) : $raw;
         $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$raw)));
         $urls  = [];
         foreach($lines as $l){
@@ -585,6 +580,7 @@ CSS;
     }
 
     private function sanitize_lines_as_text($raw){
+        $raw = is_string($raw) ? wp_unslash($raw) : $raw;
         $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$raw)));
         $safe  = [];
         foreach($lines as $l){
@@ -594,34 +590,75 @@ CSS;
         return array_values(array_unique($safe));
     }
 
-    /** Validate a JSON field and register a settings error on failure. */
+    /** Validate a JSON field with unslashing + normalization, show friendly errors on failure. */
     private function sanitize_json_field($raw, $fallback, $field_key, $human_label){
-        $raw = trim((string)$raw);
-        if ($raw==='') return $fallback;
-        $decoded = json_decode($raw, true);
-        if (json_last_error() === JSON_ERROR_NONE){
-            if (!is_array($decoded)){
-                add_settings_error(self::OPT_KEY, "json_type_{$field_key}",
-                    sprintf('%s must be a JSON array (e.g., [ ... ]). We received a different type.', esc_html($human_label)),
-                    'error'
-                );
-                return $fallback;
+        // Unslash early (WordPress adds slashes to POSTed textareas)
+        if (is_string($raw)) {
+            $raw = wp_unslash($raw);
+        }
+
+        // Normalize common gremlins
+        $raw = (string) $raw;
+        $raw = preg_replace('/^\xEF\xBB\xBF/', '', $raw); // strip UTF-8 BOM if present
+        $raw_trim = trim($raw);
+        if ($raw_trim === '') return $fallback;
+
+        // First attempt: strict decode
+        $decoded = json_decode($raw_trim, true);
+
+        // If that failed, try to be helpful:
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $attempt = $raw_trim;
+
+            // 1) Auto-wrap single object into an array: { ... }  ->  [ { ... } ]
+            if (preg_match('/^\s*\{.*\}\s*$/s', $attempt)) {
+                $attempt = '[' . $attempt . ']';
             }
-            return $decoded;
+
+            // 2) Remove trailing commas before ] or }
+            $attempt = preg_replace('/,\s*(\]|\})/m', '$1', $attempt);
+
+            $decoded = json_decode($attempt, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                return is_array($decoded) ? $decoded : $fallback;
+            }
+
+            // Still not valid — show a clear error
+            $msg = json_last_error_msg();
+            $hints = [
+                'Check for missing commas between items.',
+                'Use straight double-quotes (").',
+                'Remove trailing commas.',
+                'Ensure it is a JSON array: [ {...}, {...} ].',
+            ];
+            add_settings_error(
+                self::OPT_KEY,
+                "json_error_{$field_key}",
+                sprintf('%s: Invalid JSON. %s Hints: %s',
+                    esc_html($human_label),
+                    esc_html($msg),
+                    esc_html(implode(' ', $hints))
+                ),
+                'error'
+            );
+            return $fallback;
         }
-        $msg = json_last_error_msg();
-        $hints = [];
-        if (preg_match('/syntax|unexpected/i', $msg)) {
-            $hints[] = 'Check for missing commas between items.';
-            $hints[] = 'Use straight double-quotes.';
-            $hints[] = 'Remove trailing commas.';
+
+        // Must be an array for these fields
+        if (!is_array($decoded)) {
+            add_settings_error(
+                self::OPT_KEY,
+                "json_type_{$field_key}",
+                sprintf('%s must be a JSON array (e.g. [ ... ]).', esc_html($human_label)),
+                'error'
+            );
+            return $fallback;
         }
-        add_settings_error(self::OPT_KEY, "json_error_{$field_key}",
-            sprintf('%s: Invalid JSON. %s %s', esc_html($human_label), esc_html($msg), $hints ? ('Hints: '.esc_html(implode(' ', $hints))) : ''), 'error');
-        return $fallback;
+        return $decoded;
     }
 
     private function sanitize_cpt_map($raw){
+        $raw = is_string($raw) ? wp_unslash($raw) : $raw;
         $lines = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string)$raw)));
         $map = [];
         foreach($lines as $line){
