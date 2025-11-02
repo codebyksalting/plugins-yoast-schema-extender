@@ -1,0 +1,49 @@
+/* Cards & layout */
+.yse-card {
+  background: #fff;
+  border: 1px solid #dcdcde;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.yse-status {
+  background: #fff;
+  border: 1px solid #dcdcde;
+  border-radius: 6px;
+  padding: 12px;
+}
+.yse-status table { width: 100%; border-collapse: collapse; }
+.yse-status th, .yse-status td { text-align: left; border-bottom: 1px solid #efefef; padding: 6px 8px; }
+.yse-good { color: #0a7; font-weight: 600; }
+.yse-warn { color: #d60; font-weight: 600; }
+
+.yse-form-card { margin-top: 16px; }
+
+/* Field spacing: remove top margin, keep 12px bottom margin */
+.yse-field { margin: 0 0 12px 0; }
+.yse-field label { font-weight: 600; display: block; margin-bottom: 4px; }
+.yse-help { color: #555; font-size: 12px; margin-top: 4px; }
+
+/* Grids */
+.yse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.yse-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* Utilities */
+.yse-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.yse-badge { display: inline-block; padding: 2px 6px; background: #f0f0f1; border-radius: 4px; font-size: 11px; }
+.button-link { margin-left: 8px; }
+textarea.code { min-height: 140px; }
+
+/* Multi-location */
+.yse-ml-list .yse-card { margin-bottom: 12px; }
+
+/* FAQ Builder */
+.yse-faq-wrap { border: 1px solid #dcdcde; background: #fff; border-radius: 6px; padding: 12px; }
+.yse-faq-list { display: flex; flex-direction: column; gap: 10px; }
+.yse-faq-item { border: 1px dashed #c7c7cc; border-radius: 6px; padding: 10px; background: #fafafa; }
+.yse-faq-actions { display: flex; gap: 8px; }
+.yse-faq-item .row { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.yse-faq-item textarea { min-height: 90px; }
+
+/* Small polish */
+.wrap h1 { margin-bottom: 14px; }

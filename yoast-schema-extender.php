@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Yoast Schema Extender — Agency Pack (Multi-Location + FAQ Builder)
  * Description: Adds industry-aware, LLM-friendly schema on top of Yoast with a settings UI and per-post FAQ metabox. Supports Service Areas, 3-tier LocalBusiness subtypes, Import/Export, topic mentions, optional Multi-Location branches (inherit hours/phone/email). Coexists with Yoast; avoids duplication. Per-post Overrides metabox removed to keep non-tech users safe.
- * Version: 2.5.1
+ * Version: 2.5.4
  * Author: Thomas Digital
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -71,10 +71,15 @@ class YSE_Agency_UI {
 
         wp_enqueue_media();
 
-        wp_register_script('yse-admin', '', [], '2.5.1', true);
+        // JS (inline registered for convenience)
+        wp_register_script('yse-admin', '', [], '2.5.4', true);
         wp_enqueue_script('yse-admin');
 
+        // CSS from file (added in assets/)
+        wp_enqueue_style('yse-admin-css', plugins_url('assets/admin.css', __FILE__), [], '2.5.4');
+
         $inline_js = <<<'JS'
+/* ===== YSE Admin JS ===== */
 const YSE_LB_TREE = {
   'ProfessionalService': { children: ['AccountingService','FinancialService','InsuranceAgency','LegalService','RealEstateAgent'] },
   'MedicalOrganization': { children: ['Dentist','Physician','Pharmacy','VeterinaryCare'] },
@@ -127,6 +132,7 @@ function yseInitSubtypeCascades(){
     ysePopulateSelect(sub3, tier3, '(Subtype level 3 — optional)');
   };
 
+  // initial
   refresh();
 
   main.addEventListener('change', ()=>{
@@ -221,7 +227,7 @@ function yseInitFaqBuilder(){
     }
     if (up || dn){
       e.preventDefault();
-      const item = (up || dn).closest('.yse-faq-item');
+      const item = (up or dn).closest('.yse-faq-item');
       if (!item) return;
       const list = item.parentElement;
       if (up && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
@@ -236,7 +242,7 @@ jQuery(function($){
   $(document).on('click', '.yse-media', function(e){
     e.preventDefault();
     const field = $('#'+$(this).data('target'));
-    if (!wp || !wp.media) {
+    if (!wp or !wp.media) {
       alert('Media Library not available. Please ensure you are in the WP admin and media scripts are loaded.');
       return;
     }
@@ -259,38 +265,6 @@ jQuery(function($){
 });
 JS;
         wp_add_inline_script('yse-admin', $inline_js);
-
-        wp_register_style('yse-admin-css', false, [], '2.5.1');
-        wp_enqueue_style('yse-admin-css');
-        $inline_css = <<<'CSS'
-.yse-field { margin: 12px 0; }
-.yse-field label { font-weight: 600; display:block; margin-bottom:4px; }
-.yse-help { color:#555; font-size:12px; margin-top:4px; }
-.yse-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.yse-grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.yse-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.yse-badge { display:inline-block; padding:2px 6px; background:#f0f0f1; border-radius:4px; font-size:11px; }
-.yse-status { background:#fff; border:1px solid #dcdcde; border-radius:6px; padding:12px; }
-.yse-status table { width:100%; border-collapse: collapse; }
-.yse-status th, .yse-status td { text-align:left; border-bottom:1px solid #efefef; padding:6px 8px; }
-.yse-good { color:#0a7; font-weight:600; }
-.yse-warn { color:#d60; font-weight:600; }
-.button-link { margin-left:8px; }
-textarea.code { min-height: 140px; }
-.yse-card { background:#fff; border:1px solid #dcdcde; border-radius:6px; padding:12px; }
-.yse-card h3 { margin-top:0; }
-.yse-ml-head { display:flex; align-items:center; justify-content:space-between; }
-.yse-ml-list .yse-card { margin-bottom:12px; }
-
-/* FAQ Builder */
-.yse-faq-wrap { border:1px solid #dcdcde; background:#fff; border-radius:6px; padding:12px; }
-.yse-faq-list { display:flex; flex-direction:column; gap:10px; }
-.yse-faq-item { border:1px dashed #c7c7cc; border-radius:6px; padding:10px; background:#fafafa; }
-.yse-faq-actions { display:flex; gap:8px; }
-.yse-faq-item .row { display:grid; grid-template-columns: 1fr; gap: 6px; }
-.yse-faq-item textarea { min-height: 90px; }
-CSS;
-        wp_add_inline_style('yse-admin-css', $inline_css);
     }
 
     /* ---------------- Settings & fields ---------------- */
@@ -302,14 +276,14 @@ CSS;
             echo '<p>Configure your primary entity. We merge with Yoast Site Representation unless override is enabled (see Compatibility).</p>';
         }, 'yse-settings');
 
-        // NOTE: same_as field is present here (textarea, one URL per line)
+        // Main org/local fields (sameAs included)
         $fields = [
             ['org_name','Organization Name','text','', 'The official business name (as customers see it).'],
             ['org_url','Organization URL','url','', 'Your primary website address (home page).'],
             ['org_logo','Logo URL','text','', 'Square/rectangular logo. Use “Select”.'],
             ['org_email','Public Email','text','', 'ELI5: Customers can email this address. Leave blank if you don’t publish email.'],
             ['telephone','Telephone (E.164 preferred)','text','', 'Phone number like +1-916-555-1212.'],
-            ['same_as','sameAs Profiles (one URL per line)','textarea','', 'ELI5: Paste links to your official profiles (e.g., Google Business Profile, Facebook, LinkedIn, Yelp). One per line.'],
+            ['same_as','sameAs Profiles (one URL per line)','textarea','', 'ELI5: Paste links to official profiles (Google Business Profile, Facebook, LinkedIn, Yelp). One per line.'],
             ['identifier','Identifiers (JSON array)','textarea','identifier', 'ELI5: Extra IDs that prove who you are. Click “Insert example”.'],
             ['is_local','Is LocalBusiness?','checkbox','', 'Tick if you serve a local area or have a physical location.'],
             ['lb_subtype','LocalBusiness Subtype (Tier 1)','select', self::local_subtypes(), 'Pick the closest family for your business.'],
@@ -395,7 +369,6 @@ CSS;
                 printf('<textarea class="large-text code yse-mono" rows="8" name="%s[%s]" id="%s">%s</textarea>',
                     esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea($display));
             } else {
-                // For non-JSON textareas (same_as, service_area), accept one-per-line
                 if (is_array($val)) $val = implode("\n",$val);
                 printf('<textarea class="large-text" rows="6" name="%s[%s]" id="%s">%s</textarea>',
                     esc_attr(self::OPT_KEY), esc_attr($key), esc_attr($key), esc_textarea((string)$val));
@@ -472,7 +445,7 @@ CSS;
         $locs = (isset($s['ml_locations']) && is_array($s['ml_locations'])) ? $s['ml_locations'] : [];
         ?>
         <div id="yse-ml-wrap">
-            <div class="yse-ml-head">
+            <div class="yse-ml-head" style="display:flex;align-items:center;justify-content:space-between;">
                 <p class="yse-help">Add each branch/office as a separate card. The <strong>Page Slug</strong> links a location page to its branch schema.</p>
                 <p><a href="#" class="button" data-yse-act="add">Add location</a></p>
             </div>
@@ -609,12 +582,14 @@ CSS;
         <?php
     }
 
+    /* --------- Import/Export (no <hr/> before heading) --------- */
+
     private function render_import_export_panel(){
         if (!current_user_can('manage_options')) return;
         $settings = get_option(self::OPT_KEY, []);
         $export   = wp_json_encode($settings, JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT);
 
-        echo '<hr/><h2>Import / Export</h2>';
+        echo '<h2>Import / Export</h2>';
         echo '<div class="yse-grid-2">';
 
         echo '<div class="yse-card">';
@@ -638,31 +613,7 @@ CSS;
         echo '</div>';
     }
 
-    public function handle_import(){
-        if (!current_user_can('manage_options')) wp_die('Unauthorized', 403);
-        if (!isset($_POST['yse_import_nonce']) || !wp_verify_nonce($_POST['yse_import_nonce'], 'yse_import_settings')) wp_die('Invalid nonce', 400);
-
-        $raw = isset($_POST['yse_import_json']) ? (string) wp_unslash($_POST['yse_import_json']) : '';
-        $data = json_decode($raw, true);
-        if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)){
-            wp_redirect(add_query_arg(['page'=>'yse-settings','settings-updated'=>'false','yse_import'=>'fail'], admin_url('options-general.php')));
-            exit;
-        }
-        $allowed = [
-            'org_name','org_url','org_logo','org_email','same_as','identifier','is_local',
-            'lb_subtype','lb_subtype2','lb_subtype3',
-            'addr_street','addr_city','addr_region','addr_postal','addr_country','telephone',
-            'geo_lat','geo_lng','opening_hours','service_area',
-            'ml_enabled','ml_locations',
-            'slug_about','slug_contact','faq_shortcode','howto_shortcode','extra_faq_slug',
-            'cpt_map','entity_mentions','override_org',
-            'faq_post_types'
-        ];
-        $filtered = array_intersect_key($data, array_flip($allowed));
-        update_option(self::OPT_KEY, $filtered);
-        wp_redirect(add_query_arg(['page'=>'yse-settings','settings-updated'=>'true','yse_import'=>'ok'], admin_url('options-general.php')));
-        exit;
-    }
+    /* --------- Settings page rendering (card starts after heading) --------- */
 
     public function render_settings_page(){
         $yoast_ok     = $this->yoast_available();
@@ -705,11 +656,25 @@ CSS;
                 <p class="yse-help">“Source” shows where the effective value is coming from (respecting your override setting).</p>
             </div>
 
-            <form method="post" action="options.php" style="margin-top:16px;">
+            <form method="post" action="options.php">
                 <?php
                 settings_fields(self::OPT_KEY);
-                do_settings_sections('yse-settings');
-                submit_button('Save Settings');
+
+                // --- Heading OUTSIDE the card ---
+                $this->render_section_heading('yse_main');
+
+                // --- Card starts AT the paragraph (section callback) and includes all fields + rest of sections ---
+                echo '<div class="yse-card yse-form-card" style="margin-top:16px;">';
+
+                    // yse_main body (paragraph + table of fields)
+                    $this->render_section_body('yse_main');
+
+                    // Render the remaining sections (their headings + bodies) inside this same card
+                    $this->render_sections(['yse_ml','yse_intent','yse_cpt','yse_mentions','yse_faq','yse_overrides']);
+
+                    submit_button('Save Settings');
+
+                echo '</div>';
                 ?>
             </form>
 
@@ -718,6 +683,58 @@ CSS;
             <p class="yse-help">Validate with Google Rich Results Test and validator.schema.org.</p>
         </div>
         <?php
+    }
+
+    /**
+     * Render specific Settings API sections by ID, preserving WP's native markup.
+     * Helper to print only the <h2> title of a section.
+     */
+    private function render_section_heading($id){
+        global $wp_settings_sections;
+        $page = 'yse-settings';
+        if (!empty($wp_settings_sections[$page][$id]['title'])){
+            echo '<h2>'.esc_html($wp_settings_sections[$page][$id]['title']).'</h2>';
+        }
+    }
+
+    /**
+     * Helper to print only the body (callback + fields) of a section, without the <h2>.
+     */
+    private function render_section_body($id){
+        global $wp_settings_sections, $wp_settings_fields;
+        $page = 'yse-settings';
+        if (!empty($wp_settings_sections[$page][$id]['callback']) && is_callable($wp_settings_sections[$page][$id]['callback'])){
+            call_user_func($wp_settings_sections[$page][$id]['callback'], $wp_settings_sections[$page][$id]);
+        }
+        if (!empty($wp_settings_fields[$page][$id])){
+            echo '<table class="form-table" role="presentation">';
+            do_settings_fields($page, $id);
+            echo '</table>';
+        }
+    }
+
+    /**
+     * Render multiple sections (title + body).
+     */
+    private function render_sections(array $ids){
+        global $wp_settings_sections, $wp_settings_fields;
+        $page = 'yse-settings';
+        foreach ($ids as $id){
+            if (empty($wp_settings_sections[$page][$id])) continue;
+            $section = $wp_settings_sections[$page][$id];
+
+            if ($section['title']){
+                echo '<h2>'.esc_html($section['title']).'</h2>';
+            }
+            if (!empty($section['callback']) && is_callable($section['callback'])){
+                call_user_func($section['callback'], $section);
+            }
+            if (!empty($wp_settings_fields[$page][$id])){
+                echo '<table class="form-table" role="presentation">';
+                do_settings_fields($page, $id);
+                echo '</table>';
+            }
+        }
     }
 
     private function gather_org_status_rows(){
@@ -1165,7 +1182,7 @@ CSS;
                     } else {
                         $key = 'txt:'.strtolower(trim(is_string($it)?$it:wp_json_encode($it)));
                     }
-                    if (!isset($seen[$key])){ $seen[$key]=true; $merged[]=$it; }
+                    if (!isset($seen[$key])){ $seen[$key]=true; $merged[] = $it; }
                 }
                 $data['about']    = $merged;
                 $data['mentions'] = $merged;
@@ -1209,6 +1226,7 @@ CSS;
                 };
             }
 
+            // BreadcrumbList (simple, consistent)
             if (class_exists('\Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece')){
                 $pieces[] = new class($context) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
                     public function is_needed(){ return true; }
@@ -1224,6 +1242,7 @@ CSS;
                 };
             }
 
+            // Detect iframes (YouTube/Vimeo) → lightweight VideoObject
             $content_full = $post ? apply_filters('the_content', $post->post_content) : '';
             if ($content_full && preg_match('/<iframe[^>]+src="[^"]*(youtube|vimeo)\.com[^"]+"/i', $content_full) && class_exists('\Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece')){
                 $pieces[] = new class($context) extends \Yoast\WP\SEO\Generators\Schema\Abstract_Schema_Piece {
