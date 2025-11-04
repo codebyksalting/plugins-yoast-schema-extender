@@ -72,14 +72,14 @@ class YSE_Agency_UI {
         wp_enqueue_media();
 
         // JS (inline registered for convenience)
-        wp_register_script('yse-admin', '', [], '2.5.4', true);
+        wp_register_script('yse-admin', '', ['jquery'], '2.5.4', true);
         wp_enqueue_script('yse-admin');
 
         // CSS from file (added in assets/)
         wp_enqueue_style('yse-admin-css', plugins_url('assets/admin.css', __FILE__), [], '2.5.4');
 
         $inline_js = <<<'JS'
-/* ===== YSE Admin JS ===== */
+/* ===== YSE Admin JS (fixed) ===== */
 const YSE_LB_TREE = {
   'ProfessionalService': { children: ['AccountingService','FinancialService','InsuranceAgency','LegalService','RealEstateAgent'] },
   'MedicalOrganization': { children: ['Dentist','Physician','Pharmacy','VeterinaryCare'] },
@@ -178,7 +178,7 @@ function yseInitMultiLocation(){
     if (act === 'media'){
       const fieldId = btn.getAttribute('data-target');
       const input = wrap.querySelector('#'+fieldId);
-      if (!wp || !wp.media) { alert('Media Library not available.'); return; }
+      if (typeof wp === 'undefined' || !wp.media) { alert('Media Library not available.'); return; }
       const frame = wp.media({title:'Select Image', button:{text:'Use this'}, multiple:false});
       frame.on('select', function(){
         const att = frame.state().get('selection').first().toJSON();
@@ -227,7 +227,8 @@ function yseInitFaqBuilder(){
     }
     if (up || dn){
       e.preventDefault();
-      const item = (up or dn).closest('.yse-faq-item');
+      const handle = up || dn;
+      const item = handle.closest('.yse-faq-item');
       if (!item) return;
       const list = item.parentElement;
       if (up && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
@@ -242,7 +243,7 @@ jQuery(function($){
   $(document).on('click', '.yse-media', function(e){
     e.preventDefault();
     const field = $('#'+$(this).data('target'));
-    if (!wp or !wp.media) {
+    if (typeof wp === 'undefined' || !wp.media) {
       alert('Media Library not available. Please ensure you are in the WP admin and media scripts are loaded.');
       return;
     }
@@ -254,9 +255,38 @@ jQuery(function($){
     frame.open();
   });
 
-  function fill(id, sample){ const el = $('#'+id); el.val(JSON.stringify(sample, null, 2)); }
+  function fill(id, sample){
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = JSON.stringify(sample, null, 2);
+  }
+
+  // Insert Example links
   $(document).on('click','[data-yse-example="identifier"]', function(e){ e.preventDefault(); fill('identifier', [{"@type":"PropertyValue","propertyID":"DUNS","value":"123456789"}]); });
-  $(document).on('click','[data-yse-example="opening_hours"]', function(e){ e.preventDefault(); fill('opening_hours', [{"@type":"OpeningHoursSpecification","dayOfWeek":["Monday","Tuesday","Wednesday","Thursday","Friday"],"opens":"09:00","closes":"17:00"}]); });
+    // Insert Example: Opening Hours — Mon–Fri 09:00–17:00, Sat/Sun closed
+    $(document).on('click','[data-yse-example="opening_hours"]', function(e){
+    e.preventDefault();
+    const sample = [
+        {
+        "@type": "OpeningHoursSpecification",
+        "dayOfWeek": ["Monday","Tuesday","Wednesday","Thursday","Friday"],
+        "opens": "09:00",
+        "closes": "17:00"
+        },
+        // {
+        // Weekend closed template.
+        // Some validators prefer you simply OMIT closed days entirely.
+        // If a tool complains about 00:00–00:00, delete this weekend block.
+        // "@type": "OpeningHoursSpecification",
+        // "dayOfWeek": ["Saturday","Sunday"],
+        // "opens": "00:00",
+        // "closes": "00:00"
+        // }
+    ];
+    const el = document.getElementById('opening_hours');
+    if (!el) return;
+    el.value = JSON.stringify(sample, null, 2);
+    });
   $(document).on('click','[data-yse-example="entity_mentions"]', function(e){ e.preventDefault(); fill('entity_mentions', [{"@id":"https://en.wikipedia.org/wiki/Web_design"},{"@id":"https://www.wikidata.org/wiki/Q16674915"}]); });
 
   yseInitSubtypeCascades();
@@ -380,7 +410,8 @@ JS;
             }
             if ($key==='opening_hours'){
                 echo ' <a href="#" class="button-link" data-yse-example="opening_hours">Insert example</a>';
-                echo '<div class="yse-help">JSON array of <code>OpeningHoursSpecification</code>. Use 24-hour HH:MM.</div>';
+                echo '<div class="yse-help">JSON array of <code>OpeningHoursSpecification</code>. Use 24-hour HH:MM. '
+                . 'Tip: The example includes a weekend “closed” template (00:00–00:00). For maximum Google-compatibility, you can simply delete the weekend block so closed days are omitted.</div>';
             }
             if ($key==='entity_mentions'){
                 echo ' <a href="#" class="button-link" data-yse-example="entity_mentions">Insert example</a>';
@@ -1444,5 +1475,38 @@ JS;
         return $graph;
     }
 }
+
+/**
+ * === Access Note (Client-Proofing) ===
+ * The settings page is intentionally hidden from wp-admin menus for client safety.
+ * Direct URL (replace domain): https://example.com/wp-admin/options-general.php?page=yse-settings
+ * Admin path (relative): /wp-admin/options-general.php?page=yse-settings
+ * To re-enable menu discovery, remove the hooks below.
+ */
+
+// Hide the "Schema Extender" submenu under Settings, while keeping the page reachable by direct URL.
+add_action('admin_menu', function () {
+    remove_submenu_page('options-general.php', 'yse-settings');
+}, 999);
+
+// Remove the Settings action link for this plugin on the Plugins screen (single-site).
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
+    foreach ($links as $k => $html) {
+        if (strpos($html, 'page=yse-settings') !== false) {
+            unset($links[$k]);
+        }
+    }
+    return $links;
+}, 99);
+
+// Also remove the Settings link in Network Admin (multisite).
+add_filter('network_admin_plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
+    foreach ($links as $k => $html) {
+        if (strpos($html, 'page=yse-settings') !== false) {
+            unset($links[$k]);
+        }
+    }
+    return $links;
+}, 99);
 
 YSE_Agency_UI::instance();
