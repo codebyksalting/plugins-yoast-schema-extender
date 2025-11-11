@@ -1052,7 +1052,7 @@ JS;
                 <label>Question</label>
                 <input type="text" name="yse_faq_q[<?php echo esc_attr($idx); ?>]" value="<?php echo esc_attr($q); ?>" placeholder="e.g., How long does a typical project take?"/>
             </div>
-            <div class="row">
+            <div class="yse-row">
                 <label>Answer</label>
                 <textarea name="yse_faq_a[<?php echo esc_attr($idx); ?>]" placeholder="Short, helpful answer. Avoid pure marketing language."><?php echo esc_textarea($a); ?></textarea>
             </div>

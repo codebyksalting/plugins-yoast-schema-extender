@@ -42,7 +42,7 @@ textarea.code { min-height: 140px; }
 .yse-faq-list { display: flex; flex-direction: column; gap: 10px; }
 .yse-faq-item { border: 1px dashed #c7c7cc; border-radius: 6px; padding: 10px; background: #fafafa; }
 .yse-faq-actions { display: flex; gap: 8px; }
-.yse-faq-item .row { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.yse-faq-item .yse-row { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .yse-faq-item textarea { min-height: 90px; }
 
 /* Small polish */
