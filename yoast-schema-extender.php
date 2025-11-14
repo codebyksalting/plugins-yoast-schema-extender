@@ -200,42 +200,42 @@ function yseInitMultiLocation(){
 
 // FAQ Builder UI
 function yseInitFaqBuilder(){
-  document.addEventListener('click', function(e){
-    const add = e.target.closest('[data-yse-faq-add]');
-    const del = e.target.closest('[data-yse-faq-del]');
-    const up  = e.target.closest('[data-yse-faq-up]');
-    const dn  = e.target.closest('[data-yse-faq-dn]');
+    document.addEventListener('click', function(e){
+        const add = e.target.closest('[data-yse-faq-add]');
+        const del = e.target.closest('[data-yse-faq-del]');
+        const up  = e.target.closest('[data-yse-faq-up]');
+        const dn  = e.target.closest('[data-yse-faq-dn]');
 
-    if (add){
-      e.preventDefault();
-      const wrap = add.closest('.yse-faq-wrap');
-      const list = wrap.querySelector('.yse-faq-list');
-      const tmpl = wrap.querySelector('template');
-      const idx = Date.now();
-      const html = tmpl.innerHTML.replace(/__IDX__/g, String(idx));
-      const div = document.createElement('div');
-      div.className = 'yse-faq-item';
-      div.innerHTML = html;
-      list.appendChild(div);
-      return;
-    }
-    if (del){
-      e.preventDefault();
-      const item = del.closest('.yse-faq-item');
-      if (item) item.remove();
-      return;
-    }
-    if (up || dn){
-      e.preventDefault();
-      const handle = up || dn;
-      const item = handle.closest('.yse-faq-item');
-      if (!item) return;
-      const list = item.parentElement;
-      if (up && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
-      if (dn && item.nextElementSibling) list.insertBefore(item.nextElementSibling, item);
-      return;
-    }
-  });
+        if (add){
+        e.preventDefault();
+        const wrap = add.closest('.yse-faq-wrap');
+        const list = wrap.querySelector('.yse-faq-list');
+        const tmpl = wrap.querySelector('template');
+        const idx = Date.now();
+        const html = tmpl.innerHTML.replace(/__IDX__/g, String(idx));
+        const div = document.createElement('div');
+        div.className = 'yse-faq-item';
+        div.innerHTML = html;
+        list.appendChild(div);
+        return;
+        }
+        if (del){
+        e.preventDefault();
+        const item = del.closest('.yse-faq-item');
+        if (item) item.remove();
+        return;
+        }
+        if (up || dn){
+        e.preventDefault();
+        const handle = up || dn;
+        const item = handle.closest('.yse-faq-item');
+        if (!item) return;
+        const list = item.parentElement;
+        if (up && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
+        if (dn && item.nextElementSibling) list.insertBefore(item.nextElementSibling, item);
+        return;
+        }
+    });
 }
 
 jQuery(function($){
@@ -1022,7 +1022,12 @@ JS;
 
         echo '<div class="yse-faq-wrap">';
         echo '<p><label><input type="checkbox" name="yse_faq_enabled" value="1" '.checked($enabled,true,false).'/> Enable FAQ for this post</label></p>';
-        echo '<p class="yse-help">Guidelines: keep it user-facing, avoid promotional fluff, at least 2 Q&As, each question should end with a question mark.</p>';
+        echo '<p class="yse-help">Guidelines:</p>';
+        echo '<ul class="yse-list">';
+        echo '<li>&bull; Aim for concise, self-contained answers: <strong>1–3 sentences</strong>, roughly <strong>25–75 words</strong>.</li>';
+        echo '<li>&bull; Hard cap: keep it under <strong>150 words</strong>. Long rambles tank scannability and reduce chances of a nice rich result.</li>';
+        echo '<li>&bull; Pattern that works: <strong>direct answer first</strong>, then one clarifying detail. If it needs more, your answer is probably a mini-article—link to it instead of stuffing it here.</li>';
+        echo '</ul>';
 
         echo '<div class="yse-faq-list">';
         if (!empty($items)){
@@ -1048,7 +1053,7 @@ JS;
         $a = is_string($a) ? $a : '';
         ?>
         <div class="yse-faq-item">
-            <div class="row">
+            <div class="yse-row">
                 <label>Question</label>
                 <input type="text" name="yse_faq_q[<?php echo esc_attr($idx); ?>]" value="<?php echo esc_attr($q); ?>" placeholder="e.g., How long does a typical project take?"/>
             </div>

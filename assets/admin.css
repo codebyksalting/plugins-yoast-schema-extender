@@ -22,7 +22,9 @@
 /* Field spacing: remove top margin, keep 12px bottom margin */
 .yse-field { margin: 0 0 12px 0; }
 .yse-field label { font-weight: 600; display: block; margin-bottom: 4px; }
-.yse-help { color: #555; font-size: 12px; margin-top: 4px; }
+.yse-help { margin-top: 4px; }
+.yse-help,
+.yse-list li { color: #555; font-size: 12px; }
 
 /* Grids */
 .yse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -43,7 +45,7 @@ textarea.code { min-height: 140px; }
 .yse-faq-item { border: 1px dashed #c7c7cc; border-radius: 6px; padding: 10px; background: #fafafa; }
 .yse-faq-actions { display: flex; gap: 8px; }
 .yse-faq-item .yse-row { display: grid; grid-template-columns: 1fr; gap: 6px; }
-.yse-faq-item textarea { min-height: 90px; }
+.yse-faq-item textarea { min-height: 230px; }
 
 /* Small polish */
 .wrap h1 { margin-bottom: 14px; }
