@@ -491,7 +491,9 @@ JS;
         <?php
     }
     private function render_ml_card($idx, $L){
-        $def = function($k,$d=''){ return isset($L[$k]) ? $L[$k] : $d; };
+        $def = function($k, $d = '') use ($L) {
+            return isset($L[$k]) ? $L[$k] : $d;
+        };
         $p = 'yse_settings[ml_locations]['.esc_attr($idx).']';
         ?>
         <div class="yse-card yse-ml-item">
@@ -798,6 +800,22 @@ JS;
 
         return $rows;
     }
+    
+    /**
+     * Convert stored <br> tags back to real newlines for textarea display.
+     * This is only for the FAQ answer UI; schema keeps the <br> version.
+     */
+    private function yse_faq_br_to_newlines($s){
+        if (!is_string($s) || $s === '') return $s;
+
+        // Normalize any stray CRLF / CR into LF first.
+        $s = str_replace(["\r\n", "\r"], "\n", $s);
+
+        // Convert <br>, <br/>, <br /> (any case) into LF.
+        $s = preg_replace('/<br\\s*\\/?\\s*>/i', "\n", $s);
+
+        return $s;
+    }
 
     /* ------------- Sanitization helpers ------------- */
 
@@ -1017,7 +1035,16 @@ JS;
         $items = [];
         if ($raw){
             $dec = json_decode($raw, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($dec)) $items = $dec;
+            if (json_last_error() === JSON_ERROR_NONE && is_array($dec)) {
+                foreach ($dec as &$qa){
+                    if (isset($qa['a']) && is_string($qa['a'])) {
+                        // Stored schema text uses <br>. Convert back to real newlines for the textarea.
+                        $qa['a'] = $this->yse_faq_br_to_newlines($qa['a']);
+                    }
+                }
+                unset($qa);
+                $items = $dec;
+            }
         }
 
         echo '<div class="yse-faq-wrap">';
@@ -1083,8 +1110,16 @@ JS;
 
         $pairs = [];
         foreach ($qs as $k=>$q){
-            $q = is_string($q) ? trim(wp_strip_all_tags($q)) : '';
+            $q = is_string($q) ? $q : '';
+            $q = trim(wp_strip_all_tags($q));
+
             $a = isset($as[$k]) ? (string) wp_unslash($as[$k]) : '';
+
+            // 1) Normalize OS newlines to LF, 2) convert LF → <br> for schema storage.
+            // This keeps the JSON compact while still giving Google visible line breaks.
+            $a = str_replace(["\r\n", "\r"], "\n", $a);
+            $a = str_replace("\n", '<br>', $a);
+
             $a = wp_kses($a, [
                 'p'=>[], 'br'=>[], 'strong'=>[], 'em'=>[], 'ul'=>[], 'ol'=>[], 'li'=>[],
                 'a'=>['href'=>[], 'title'=>[], 'rel'=>[], 'target'=>[]],
@@ -1097,7 +1132,11 @@ JS;
         }
 
         if (!empty($pairs)){
-            update_post_meta($post_id, '_yse_faq_items', wp_json_encode($pairs, JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+            update_post_meta(
+                $post_id,
+                '_yse_faq_items',
+                wp_json_encode($pairs, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+            );
         } else {
             delete_post_meta($post_id, '_yse_faq_items');
         }
